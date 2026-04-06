@@ -89,7 +89,7 @@ function feUpdate(x: number, y: number, now: number) {
   };
 }
 
-// ── Scroll helper — find nearest scrollable ancestor ──────────────────────
+// ── Scroll helper: find nearest scrollable ancestor ──────────────────────
 function getScrollTarget(el: Element | null): Element | Window {
   let cur = el;
   while (cur && cur !== document.documentElement) {
@@ -218,7 +218,7 @@ function AboutContent() {
   );
 }
 
-// Calibration dot positions — 3x3 grid, matches official WebGazer demo config.
+// Calibration dot positions: 3x3 grid, matches official WebGazer demo config.
 // Module-level so handleCalibDot can reference it without stale closures.
 const CALIB_POSITIONS = (() => {
   const xs = ["10%", "50%", "90%"];
@@ -248,7 +248,7 @@ export default function VisionWeb() {
   const [calibDots, setCalibDots] = useState<number[]>(Array(9).fill(0));
   const CALIB_CLICKS_NEEDED = 5;
   // Ref mirror of calibDots so handleCalibDot reads current counts without
-  // stale closure — state setters are async, refs are always current
+  // stale closure. State setters are async; refs are always current
   const calibDotsRef = useRef<number[]>(Array(9).fill(0));
   const dwellFiredRef = useRef(false);
 
@@ -267,7 +267,7 @@ export default function VisionWeb() {
   // Initialize to center of screen so outlier rejection doesn't block the
   // first real gaze samples (which would look like 1000px+ jumps from -100,-100)
   const gazeSmoothedRef = useRef({ x: -1, y: -1 }); // -1 = uninitialized sentinel
-  // Viewport size at calibration time — used to scale predictions when the
+  // Viewport size at calibration time. Used to scale predictions when the
   // window is resized after calibration (WebGazer stores raw pixel coords)
   const calibViewportRef = useRef({ w: 0, h: 0 });
   const streamRef = useRef<MediaStream | null>(null);
@@ -303,7 +303,7 @@ export default function VisionWeb() {
     _feDwellMs = dwellMs;
   }, [dwellMs]);
 
-  // ── WebGazer init — methods verified against 2.1.0 source ──────────────
+  // ── WebGazer init: methods verified against 2.1.0 source ──────────────
   const startGaze = useCallback(async () => {
     if (gazeStartedRef.current) return;
 
@@ -356,16 +356,16 @@ export default function VisionWeb() {
           .filter((k) => k.toLowerCase().includes("webgazer"))
           .forEach((k) => localStorage.removeItem(k));
       } catch {
-        /* private mode — continue */
+        /* private mode, continue */
       }
 
       // ── Configure BEFORE begin() ─────────────────────────────────────────
-      // saveDataAcrossSessions MUST come before begin() — it prevents WebGazer
+      // saveDataAcrossSessions MUST come before begin(). It prevents WebGazer
       // from loading persisted regression weights from localforage on startup.
       // This is the correct API for clearing old session data (not clearData).
       wg.saveDataAcrossSessions(false);
       // Valid regression names in 2.1.0: 'ridge', 'weightedRidge', 'threadedRidge'
-      // We were calling 'ridgeReg' which is invalid — WebGazer silently ignored it
+      // We were calling 'ridgeReg' which is invalid. WebGazer silently ignored it
       wg.setRegression("ridge");
       wg.setTracker("TFFacemesh");
       // Use WebGazer's built-in Kalman filter for smoothing
@@ -428,9 +428,9 @@ export default function VisionWeb() {
       wg.showFaceOverlay(false);
       wg.showFaceFeedbackBox(false);
       wg.showPredictionPoints(false);
-      // clearData() is async — wipe any garbage samples from TF.js init
+      // clearData() is async. Wipe any garbage samples from TF.js init
       await wg.clearData();
-      // Keep auto click-recording ON during calibration — that's exactly how
+      // Keep auto click-recording ON during calibration. That is exactly how
       // WebGazer is designed to be used. Every dot click = one training sample.
       // We stop recording after calibration completes in handleCalibDot.
     } catch (err) {
@@ -440,13 +440,13 @@ export default function VisionWeb() {
     }
   }, []);
 
-  // ── MediaPipe hands init — uses @mediapipe/hands v0.4 (stable since 2021) ──
+  // ── MediaPipe hands init: uses @mediapipe/hands v0.4 (stable since 2021) ──
   const startHands = useCallback(async () => {
     if (handsStartedRef.current || !videoRef.current) return;
     handsStartedRef.current = true;
 
     try {
-      // Load @mediapipe/hands via script tag — more reliable than ES module
+      // Load @mediapipe/hands via script tag. More reliable than ES module
       // import for WASM-based libraries; avoids CDN WASM/JS version mismatch
       await new Promise<void>((resolve, reject) => {
         if ((window as unknown as Record<string, unknown>).Hands) {
@@ -510,7 +510,7 @@ export default function VisionWeb() {
             side === "left" ? pinchLeft.current : pinchRight.current;
           const result = detector.update(lm, now);
 
-          // SCROLL: pinch + drag — Vision Pro style
+          // SCROLL: pinch + drag, Vision Pro style
           if (result.state === "dragging" && result.center) {
             const sx = (1 - result.center.x) * window.innerWidth;
             const sy = result.center.y * window.innerHeight;
@@ -577,7 +577,7 @@ export default function VisionWeb() {
     }
   }, []);
 
-  // ── Camera init — getUserMedia MUST be the first call (no state/toast before it) ──
+  // ── Camera init: getUserMedia MUST be the first call (no state/toast before it) ──
   const handleStart = useCallback(async () => {
     // Guard against double-calls from rapid tapping
     if (startingRef.current) return;
@@ -641,9 +641,9 @@ export default function VisionWeb() {
       },
       { id: "focus", title: "System Status", x: 820, y: 100, content: "focus" },
     ]);
-    // Start hands immediately — no calibration needed
+    // Start hands immediately (no calibration needed)
     startHands();
-    // Start WebGazer — wait 1.5s before showing calibration dots so TF.js
+    // Start WebGazer. Wait 1.5s before showing calibration dots so TF.js
     // face detection fully initializes. Then call clearData() to wipe any
     // garbage auto-collected samples from the init period (all near 0,0).
     // startGaze now awaits begin() internally, so by the time .then() fires:
@@ -653,7 +653,7 @@ export default function VisionWeb() {
     });
   }, [startHands, startGaze]);
 
-  // ── Check permission state on mount — show denied UI before user clicks ──
+  // ── Check permission state on mount: show denied UI before user clicks ──
   useEffect(() => {
     if (!navigator?.permissions?.query) return;
     navigator.permissions
@@ -661,7 +661,7 @@ export default function VisionWeb() {
       .then((status) => {
         const state = status.state as "prompt" | "granted" | "denied";
         setPermState(state);
-        // Never auto-launch — always require button click so getUserMedia
+        // Never auto-launch. Always require button click so getUserMedia
         // fires from a real user gesture
         status.onchange = () => {
           setPermState(status.state as "prompt" | "granted" | "denied");
@@ -671,7 +671,7 @@ export default function VisionWeb() {
   }, []);
 
   const handleCalibDot = useCallback((idx: number, _e: React.MouseEvent) => {
-    // Auto click-recording is ON — WebGazer captures this click automatically.
+    // Auto click-recording is ON. WebGazer captures this click automatically.
     // We just track UI state (which dot, how many clicks).
     const newCount = Math.min(
       calibDotsRef.current[idx] + 1,
@@ -687,7 +687,7 @@ export default function VisionWeb() {
         | { removeMouseEventListeners: () => void }
         | undefined;
       wg?.removeMouseEventListeners();
-      // Video hides automatically — controlled by `calibrating` state
+      // Video hides automatically, controlled by `calibrating` state
       calibViewportRef.current = {
         w: window.innerWidth,
         h: window.innerHeight,
@@ -762,7 +762,7 @@ export default function VisionWeb() {
 
   return (
     <>
-      {/* Load WebGazer ONLY after camera is granted — it auto-starts on load and
+      {/* Load WebGazer ONLY after camera is granted. It auto-starts on load and
           would call getUserMedia before the user clicks Start otherwise */}
       {ready && (
         <Script
@@ -774,7 +774,7 @@ export default function VisionWeb() {
         />
       )}
 
-      {/* Camera video — hidden normally, shown during calibration so the user
+      {/* Camera video: hidden normally, shown during calibration so the user
           can position their face and verify they're in frame */}
       <div
         style={{
@@ -857,7 +857,7 @@ export default function VisionWeb() {
         )}
       </div>
 
-      {/* Splash — pure inline styles, no Tailwind dependency */}
+      {/* Splash: pure inline styles, no Tailwind dependency */}
       {!started && (
         <div
           style={{
@@ -1033,7 +1033,7 @@ export default function VisionWeb() {
         </div>
       )}
 
-      {/* Loading state — only after user clicked Start, while camera spins up */}
+      {/* Loading state: only after user clicked Start, while camera spins up */}
       {started && !ready && !cameraError && (
         <div className="fixed inset-0 z-[7000] flex items-center justify-center bg-zinc-950">
           <div className="text-center">
@@ -1045,7 +1045,7 @@ export default function VisionWeb() {
         </div>
       )}
 
-      {/* Calibration screen — shown after camera starts, before main app */}
+      {/* Calibration screen: shown after camera starts, before main app */}
       {calibrating &&
         ready &&
         (() => {
@@ -1143,7 +1143,7 @@ export default function VisionWeb() {
                 </p>
               </div>
 
-              {/* Dots — only show completed ones + current active */}
+              {/* Dots: only show completed ones + current active */}
               {CALIB_POSITIONS.map((pos, idx) => {
                 const isDone = calibDots[idx] >= CALIB_CLICKS_NEEDED;
                 const isActive = idx === activeIdx;
@@ -1214,7 +1214,7 @@ export default function VisionWeb() {
                           stroke="rgba(99,102,241,0.3)"
                           strokeWidth={2}
                         />
-                        {/* Fill ring — progress arc */}
+                        {/* Fill ring: progress arc */}
                         {clicks > 0 && (
                           <circle
                             cx={24}
@@ -1447,7 +1447,7 @@ export default function VisionWeb() {
             </div>
           )}
 
-          {/* Hint — calibrate by clicking around */}
+          {/* Hint: calibrate by clicking around */}
           {gazeActive && (
             <div
               className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 px-4 py-2 rounded-full glass text-xs text-zinc-500 pointer-events-none"
