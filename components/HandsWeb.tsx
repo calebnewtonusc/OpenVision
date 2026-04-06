@@ -839,7 +839,7 @@ export default function HandsWeb() {
                     fontSize: 11,
                     fontWeight: 600,
                     cursor: "pointer",
-                    transition: "all 0.15s",
+                    transition: "color 0.15s, background 0.15s",
                     textTransform: "capitalize",
                   }}
                 >

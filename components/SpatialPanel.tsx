@@ -76,8 +76,8 @@ export function SpatialPanel({
         transform: `translate(${pos.x}px, ${pos.y}px) scale(${scale})`,
         transformOrigin: "top left",
         background: "rgba(255,255,255,0.07)",
-        backdropFilter: "blur(24px)",
-        WebkitBackdropFilter: "blur(24px)",
+        backdropFilter: "blur(8px)",
+        WebkitBackdropFilter: "blur(8px)",
         border: gazeFocused
           ? "1px solid rgba(99,102,241,0.6)"
           : "1px solid rgba(255,255,255,0.10)",

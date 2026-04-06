@@ -1,4 +1,4 @@
-export interface PinchResult {
+interface PinchResult {
   state: "idle" | "pinching" | "holding" | "dragging" | "released";
   changed: boolean;
   lost?: boolean;

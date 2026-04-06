@@ -135,7 +135,8 @@ export default function Home() {
                   background: "rgba(255,255,255,0.03)",
                   padding: 24,
                   textAlign: "left",
-                  transition: "all 0.2s ease",
+                  transition:
+                    "border-color 0.2s ease, background 0.2s ease, transform 0.2s ease",
                   cursor: "pointer",
                 }}
                 onMouseEnter={(e) => {

@@ -1117,7 +1117,7 @@ export default function VisionWeb() {
                   {Array.from({ length: CALIB_POSITIONS.length }).map(
                     (_, i) => (
                       <div
-                        key={i}
+                        key={`calib-progress-${i}`}
                         style={{
                           width: 24,
                           height: 4,
@@ -1153,7 +1153,7 @@ export default function VisionWeb() {
                 const dashOffset = circumference * (1 - fillFraction);
                 return (
                   <button
-                    key={idx}
+                    key={`calib-dot-${pos.x}-${pos.y}`}
                     onClick={(e) =>
                       isActive ? handleCalibDot(idx, e) : undefined
                     }
@@ -1171,7 +1171,7 @@ export default function VisionWeb() {
                       alignItems: "center",
                       justifyContent: "center",
                       cursor: isActive ? "pointer" : "default",
-                      transition: "all 0.25s ease",
+                      transition: "opacity 0.25s ease, transform 0.25s ease",
                       padding: 0,
                     }}
                   >
