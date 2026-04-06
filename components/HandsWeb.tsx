@@ -1016,7 +1016,7 @@ export default function HandsWeb() {
                 <span style={{ color: "#a78bfa", fontWeight: 600 }}>
                   Particles
                 </span>{" "}
-                — fingertip emission trail
+                : fingertip emission trail
               </p>
               <p
                 style={{
@@ -1027,7 +1027,7 @@ export default function HandsWeb() {
                 }}
               >
                 <span style={{ color: "#ec4899", fontWeight: 600 }}>Draw</span>{" "}
-                — paint with your index finger, wipe with open palm
+                : paint with your index finger, wipe with open palm
               </p>
               <p
                 style={{
@@ -1040,7 +1040,7 @@ export default function HandsWeb() {
                 <span style={{ color: "#10b981", fontWeight: 600 }}>
                   Bubbles
                 </span>{" "}
-                — pop them with your fingertips
+                : pop them with your fingertips
               </p>
               <p
                 style={{
@@ -1053,7 +1053,7 @@ export default function HandsWeb() {
                 <span style={{ color: "#6366f1", fontWeight: 600 }}>
                   Portal
                 </span>{" "}
-                — hands glow through the void
+                : hands glow through the void
               </p>
               <button
                 onClick={start}

@@ -123,7 +123,7 @@ function WelcomeContent() {
             <div className="w-1.5 h-1.5 rounded-full bg-indigo-500 mt-1.5 flex-shrink-0" />
             <div>
               <span className="text-xs font-semibold text-zinc-200">{k}</span>
-              <span className="text-xs text-zinc-500"> — {v}</span>
+              <span className="text-xs text-zinc-500">: {v}</span>
             </div>
           </div>
         ))}

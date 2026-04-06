@@ -6,9 +6,9 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "OpenVision — Spatial Computing in Your Browser",
+  title: "OpenVision: Spatial Computing in Your Browser",
   description:
-    "Apple Vision Pro-style spatial computing. Eye tracking, hand tracking, and spatial UI — running entirely in your browser. No headset required.",
+    "Apple Vision Pro-style spatial computing. Eye tracking, hand tracking, and spatial UI running entirely in your browser. No headset required.",
 };
 
 export default function RootLayout({
