@@ -77,50 +77,67 @@ export function drawGlassHand(
   );
   ctx.restore();
 
+  // ── Pass 2: fingers as fat soft strokes (outer glow) ───────────────────
   ctx.save();
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.shadowBlur = pinched ? 28 : 18;
-  ctx.shadowColor = rgba(accent, pinched ? 0.85 : 0.55);
-  ctx.strokeStyle = rgba(accent, 0.18);
-  ctx.lineWidth = 22;
+  ctx.shadowBlur = pinched ? 34 : 22;
+  ctx.shadowColor = rgba(accent, pinched ? 0.95 : 0.7);
+  ctx.strokeStyle = rgba(accent, 0.42);
+  ctx.lineWidth = 24;
+  ctx.beginPath();
   for (const grp of FINGER_GROUPS) {
-    drawSmoothPath(ctx, [0, ...grp], lm, mx, my);
+    appendSmoothSubpath(ctx, [0, ...grp], lm, mx, my);
   }
   ctx.stroke();
   ctx.restore();
 
+  // ── Pass 3: palm glass blob ────────────────────────────────────────────
   const palmPath = makePalmPath(lm, mx, my);
   ctx.save();
-  ctx.fillStyle = `hsla(${baseHue}, 70%, 70%, 0.07)`;
-  ctx.shadowBlur = 32;
-  ctx.shadowColor = rgba(accent, 0.45 * haloIntensity);
+  ctx.fillStyle = `hsla(${baseHue}, 75%, 72%, 0.22)`;
+  ctx.shadowBlur = 36;
+  ctx.shadowColor = rgba(accent, 0.6 * haloIntensity);
   ctx.fill(palmPath);
   ctx.restore();
 
+  // Palm radial highlight (clipped to palm)
   ctx.save();
   ctx.clip(palmPath);
-  const palmHi = ctx.createRadialGradient(cx, cy - 30, 2, cx, cy - 10, 140);
-  palmHi.addColorStop(0, "rgba(255,255,255,0.32)");
-  palmHi.addColorStop(0.4, "rgba(255,255,255,0.12)");
+  const palmHi = ctx.createRadialGradient(cx, cy - 30, 2, cx, cy - 10, 160);
+  palmHi.addColorStop(0, "rgba(255,255,255,0.45)");
+  palmHi.addColorStop(0.4, "rgba(255,255,255,0.18)");
   palmHi.addColorStop(1, "rgba(255,255,255,0)");
   ctx.fillStyle = palmHi;
-  ctx.fillRect(cx - 200, cy - 200, 400, 400);
+  ctx.fillRect(cx - 220, cy - 220, 440, 440);
   ctx.restore();
 
+  // Palm rim outline
+  ctx.save();
+  ctx.strokeStyle = rgba(accent, 0.55);
+  ctx.lineWidth = 1.5;
+  ctx.shadowBlur = 8;
+  ctx.shadowColor = rgba(accent, 0.6);
+  ctx.stroke(palmPath);
+  ctx.restore();
+
+  // ── Pass 4: inner finger highlights (single beginPath per pass) ────────
   ctx.save();
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.strokeStyle = "rgba(255,255,255,0.16)";
-  ctx.lineWidth = 8;
+  ctx.strokeStyle = "rgba(255,255,255,0.32)";
+  ctx.lineWidth = 9;
+  ctx.beginPath();
   for (const grp of FINGER_GROUPS) {
-    drawSmoothPath(ctx, [0, ...grp], lm, mx, my);
+    appendSmoothSubpath(ctx, [0, ...grp], lm, mx, my);
   }
   ctx.stroke();
-  ctx.strokeStyle = "rgba(255,255,255,0.5)";
-  ctx.lineWidth = 1.4;
+  // Brightest inner ridge
+  ctx.strokeStyle = "rgba(255,255,255,0.85)";
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
   for (const grp of FINGER_GROUPS) {
-    drawSmoothPath(ctx, [0, ...grp], lm, mx, my);
+    appendSmoothSubpath(ctx, [0, ...grp], lm, mx, my);
   }
   ctx.stroke();
   ctx.restore();
@@ -213,7 +230,12 @@ function makePalmPath(
   return path;
 }
 
-function drawSmoothPath(
+/**
+ * Add a smooth subpath through the given landmark indices to the current path.
+ * Callers manage beginPath() and stroke() so a single stroke call can render
+ * multiple subpaths together.
+ */
+function appendSmoothSubpath(
   ctx: CanvasRenderingContext2D,
   idxs: number[],
   lm: Landmark[],
@@ -222,7 +244,6 @@ function drawSmoothPath(
 ) {
   const pts = idxs.map((i) => ({ x: mx(lm[i].x), y: my(lm[i].y) }));
   if (pts.length < 2) return;
-  ctx.beginPath();
   ctx.moveTo(pts[0].x, pts[0].y);
   for (let i = 1; i < pts.length - 1; i++) {
     const mid = {
