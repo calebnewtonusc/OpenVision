@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Script from "next/script";
 import {
   Eye,
@@ -9,15 +9,17 @@ import {
   Bug,
   Plus,
   X,
-  Zap,
   BookOpen,
   LayoutGrid,
 } from "lucide-react";
-import { SpatialPanel } from "./SpatialPanel";
-import { PinchDetector } from "@/hooks/usePinch";
+import {
+  SpatialPanel,
+  useHandTracking,
+  useGazeTracking,
+  useDwellClick,
+} from "@/lib/openvision";
 import { toast } from "sonner";
 
-// ── Types ──────────────────────────────────────────────────────────────────
 interface GazePoint {
   x: number;
   y: number;
@@ -28,65 +30,6 @@ interface PanelDef {
   x: number;
   y: number;
   content: "welcome" | "gestures" | "focus" | "about";
-}
-
-// ── Focus engine (module-level) ────────────────────────────────────────────
-const STABILITY_MS = 180;
-const SWITCH_DIST = 60;
-let _feCurrent: Element | null = null;
-let _feCandidate: Element | null = null;
-let _feCandidateStart = 0;
-let _feDwellStart = 0;
-let _feDwellMs = 1200;
-
-function feUpdate(x: number, y: number, now: number) {
-  const targets = Array.from(
-    document.querySelectorAll("[data-gaze-target]"),
-  ).filter((el) => {
-    const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
-  });
-
-  let best: Element | null = null;
-  let bestDist = Infinity;
-  for (const el of targets) {
-    const r = el.getBoundingClientRect();
-    const cx = r.left + r.width / 2;
-    const cy = r.top + r.height / 2;
-    const d = Math.hypot(x - cx, y - cy);
-    const reach = Math.max(r.width, r.height) * 0.7 + 40;
-    if (d < reach && d < bestDist) {
-      bestDist = d;
-      best = el;
-    }
-  }
-
-  if (_feCurrent && best !== _feCurrent) {
-    const r = _feCurrent.getBoundingClientRect();
-    if (
-      Math.hypot(x - (r.left + r.width / 2), y - (r.top + r.height / 2)) <
-      SWITCH_DIST
-    )
-      best = _feCurrent;
-  }
-
-  if (best !== _feCandidate) {
-    _feCandidate = best;
-    _feCandidateStart = now;
-  }
-  if (best && now - _feCandidateStart >= STABILITY_MS && best !== _feCurrent) {
-    _feCurrent?.classList.remove("gaze-focus");
-    _feCurrent = best;
-    _feDwellStart = now;
-    _feCurrent?.classList.add("gaze-focus");
-  }
-
-  return {
-    target: _feCurrent,
-    dwellProgress: _feCurrent
-      ? Math.min((now - _feDwellStart) / _feDwellMs, 1)
-      : 0,
-  };
 }
 
 // ── Scroll helper: find nearest scrollable ancestor ──────────────────────
@@ -218,13 +161,13 @@ function AboutContent() {
   );
 }
 
-// Calibration dot positions: 3x3 grid, matches official WebGazer demo config.
-// Module-level so handleCalibDot can reference it without stale closures.
 const CALIB_POSITIONS = (() => {
   const xs = ["10%", "50%", "90%"];
   const ys = ["15%", "50%", "85%"];
   return ys.flatMap((y) => xs.map((x) => ({ x, y })));
 })();
+
+const CALIB_CLICKS_NEEDED = 5;
 
 // ── Main component ─────────────────────────────────────────────────────────
 export default function VisionWeb() {
@@ -233,11 +176,6 @@ export default function VisionWeb() {
     "unknown" | "prompt" | "granted" | "denied"
   >("unknown");
   const [ready, setReady] = useState(false);
-  const [gazePos, setGazePos] = useState<GazePoint>({ x: -100, y: -100 });
-  const [dwellProgress, setDwellProgress] = useState(0);
-  const [gazeActive, setGazeActive] = useState(false);
-  const [handsActive, setHandsActive] = useState(false);
-  const [fps, setFps] = useState(0);
   const [debugOpen, setDebugOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [panels, setPanels] = useState<PanelDef[]>([]);
@@ -246,346 +184,120 @@ export default function VisionWeb() {
   const [cameraErrorDetail, setCameraErrorDetail] = useState("");
   const [calibrating, setCalibrating] = useState(false);
   const [calibDots, setCalibDots] = useState<number[]>(Array(9).fill(0));
-  const CALIB_CLICKS_NEEDED = 5;
-  // Ref mirror of calibDots so handleCalibDot reads current counts without
-  // stale closure. State setters are async; refs are always current
   const calibDotsRef = useRef<number[]>(Array(9).fill(0));
-  const dwellFiredRef = useRef(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const pinchLeft = useRef(new PinchDetector());
-  const pinchRight = useRef(new PinchDetector());
-  const fpsFrames = useRef(0);
-  const fpsLast = useRef(performance.now());
-  const gestureRecRef = useRef<unknown>(null);
-  const handsRef = useRef<{ close: () => void } | null>(null);
-  const animIdRef = useRef<number>(0);
-  const lastVideoTime = useRef(-1);
-  const webgazerReadyRef = useRef(false);
-  const gazeStartedRef = useRef(false);
-  const handsStartedRef = useRef(false);
-  // Initialize to center of screen so outlier rejection doesn't block the
-  // first real gaze samples (which would look like 1000px+ jumps from -100,-100)
-  const gazeSmoothedRef = useRef({ x: -1, y: -1 }); // -1 = uninitialized sentinel
-  // Viewport size at calibration time. Used to scale predictions when the
-  // window is resized after calibration (WebGazer stores raw pixel coords)
-  const calibViewportRef = useRef({ w: 0, h: 0 });
   const streamRef = useRef<MediaStream | null>(null);
   const startingRef = useRef(false);
+  const webgazerReadyRef = useRef(false);
 
-  // Reset module-level focus engine state on mount (survives React StrictMode re-mounts)
+  // ── Lib hooks ────────────────────────────────────────────────────────────
+  const dwell = useDwellClick({
+    dwellMs,
+    selector: "[data-gaze-target]",
+    focusClass: "gaze-focus",
+  });
+
+  const gaze = useGazeTracking({
+    onSample: (s) => {
+      dwell.feed(s);
+    },
+  });
+
+  const hands = useHandTracking({
+    videoRef,
+    onFrame: (f) => {
+      // Smart pinch scroll: scroll whatever scrollable lives under the gaze
+      // (or the pinch center if no gaze). VisionWeb is multi-panel so we don't
+      // bind a single target like the toolkit demo does.
+      const apply = (side: "left" | "right"): void => {
+        const r = f.pinches[side];
+        if (!r || r.state !== "dragging" || !r.center) return;
+        const sx = (1 - r.center.x) * window.innerWidth;
+        const sy = r.center.y * window.innerHeight;
+        const el = document.elementFromPoint(sx, sy);
+        const raw = -r.delta.y * 700;
+        const amt = Math.sign(raw) * Math.min(Math.abs(raw), 220);
+        const target = getScrollTarget(el);
+        if (target === window) {
+          window.scrollBy({ top: amt, behavior: "instant" });
+        } else {
+          (target as Element).scrollBy({ top: amt, behavior: "instant" });
+        }
+      };
+      apply("left");
+      apply("right");
+
+      // Pinch-released → click whatever is under the pinch center
+      const click = (side: "left" | "right"): void => {
+        const r = f.pinches[side];
+        if (r?.changed && r.state === "released" && r.center) {
+          const sx = (1 - r.center.x) * window.innerWidth;
+          const sy = r.center.y * window.innerHeight;
+          const el = document.elementFromPoint(sx, sy);
+          if (el) (el as HTMLElement).click();
+        }
+      };
+      click("left");
+      click("right");
+    },
+  });
+
+  // Calibration viewport tracking (so we can scale predictions later)
+  const calibViewportRef = useRef({ w: 0, h: 0 });
+
+  // ── Permission state on mount ────────────────────────────────────────────
   useEffect(() => {
-    _feCurrent?.classList.remove("gaze-focus");
-    _feCurrent = null;
-    _feCandidate = null;
-    _feCandidateStart = 0;
-    _feDwellStart = 0;
-    return () => {
-      // Full cleanup on unmount
-      cancelAnimationFrame(animIdRef.current);
-      streamRef.current?.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-      _feCurrent?.classList.remove("gaze-focus");
-      _feCurrent = null;
-      _feCandidate = null;
-      // Stop @mediapipe/hands if started
-      handsRef.current?.close();
-      handsRef.current = null;
-      // Tell WebGazer to stop if it started
-      const wg = (window as unknown as Record<string, unknown>).webgazer as
-        | { end?: () => void }
-        | undefined;
-      wg?.end?.();
+    let cancelled = false;
+    const navWithPermissions = navigator as unknown as {
+      permissions?: {
+        query?: (q: { name: string }) => Promise<{
+          state: PermissionState;
+          onchange: (() => void) | null;
+        }>;
+      };
     };
-  }, []);
-
-  useEffect(() => {
-    _feDwellMs = dwellMs;
-  }, [dwellMs]);
-
-  // ── WebGazer init: methods verified against 2.1.0 source ──────────────
-  const startGaze = useCallback(async () => {
-    if (gazeStartedRef.current) return;
-
-    let waited = 0;
-    while (
-      !(window as unknown as Record<string, unknown>).webgazer &&
-      waited < 10000
-    ) {
-      await new Promise((r) => setTimeout(r, 100));
-      waited += 100;
-    }
-
-    // Type exactly what 2.1.0 actually exposes (verified from source)
-    type WG = {
-      begin: () => Promise<unknown>;
-      end: () => unknown;
-      pause: () => unknown;
-      setGazeListener: (fn: (d: { x: number; y: number } | null) => void) => WG;
-      clearGazeListener: () => WG;
-      setRegression: (name: string) => WG;
-      setTracker: (name: string) => WG;
-      saveDataAcrossSessions: (v: boolean) => WG;
-      applyKalmanFilter: (v: boolean) => WG;
-      showVideo: (v: boolean) => WG;
-      showFaceOverlay: (v: boolean) => WG;
-      showFaceFeedbackBox: (v: boolean) => WG;
-      showPredictionPoints: (v: boolean) => WG;
-      clearData: () => Promise<void>;
-      recordScreenPosition: (x: number, y: number, t?: string) => WG;
-      removeMouseEventListeners: () => WG;
-      addMouseEventListeners: () => WG;
-    };
-    const wg = (window as unknown as Record<string, unknown>).webgazer as
-      | WG
-      | undefined;
-
-    if (!wg) {
-      toast.error("WebGazer failed to load");
+    const q = navWithPermissions.permissions?.query;
+    if (!q) {
+      setPermState("prompt");
       return;
     }
-
-    try {
-      gazeStartedRef.current = true;
-
-      // Belt-and-suspenders: clear any localforage data WebGazer may have
-      // persisted from a prior session. saveDataAcrossSessions(false) below
-      // is the proper API but this catches edge cases.
-      try {
-        Object.keys(localStorage)
-          .filter((k) => k.toLowerCase().includes("webgazer"))
-          .forEach((k) => localStorage.removeItem(k));
-      } catch {
-        /* private mode, continue */
-      }
-
-      // ── Configure BEFORE begin() ─────────────────────────────────────────
-      // saveDataAcrossSessions MUST come before begin(). It prevents WebGazer
-      // from loading persisted regression weights from localforage on startup.
-      // This is the correct API for clearing old session data (not clearData).
-      wg.saveDataAcrossSessions(false);
-      // Valid regression names in 2.1.0: 'ridge', 'weightedRidge', 'threadedRidge'
-      // We were calling 'ridgeReg' which is invalid. WebGazer silently ignored it
-      wg.setRegression("ridge");
-      wg.setTracker("TFFacemesh");
-      // Use WebGazer's built-in Kalman filter for smoothing
-      wg.applyKalmanFilter(true);
-
-      wg.setGazeListener((data) => {
-        if (!data) return;
-
-        // Scale from calibration viewport to current viewport size
-        const cw = calibViewportRef.current.w;
-        const ch = calibViewportRef.current.h;
-        const scaledX = cw > 0 ? data.x * (window.innerWidth / cw) : data.x;
-        const scaledY = ch > 0 ? data.y * (window.innerHeight / ch) : data.y;
-
-        // Guard: discard the known-bad top-left default and out-of-bounds
-        if (scaledX < 30 && scaledY < 30) return;
-        if (scaledX > window.innerWidth + 200) return;
-        if (scaledY > window.innerHeight + 200) return;
-
-        const clampedX = Math.max(0, Math.min(scaledX, window.innerWidth));
-        const clampedY = Math.max(0, Math.min(scaledY, window.innerHeight));
-
-        // Seed on first real sample
-        if (gazeSmoothedRef.current.x === -1) {
-          gazeSmoothedRef.current = { x: clampedX, y: clampedY };
-        }
-
-        // Outlier rejection: skip jumps > 300px in a single frame
-        const jumpDist = Math.hypot(
-          clampedX - gazeSmoothedRef.current.x,
-          clampedY - gazeSmoothedRef.current.y,
+    q({ name: "camera" })
+      .then((p) => {
+        if (cancelled) return;
+        setPermState(
+          p.state === "granted"
+            ? "granted"
+            : p.state === "denied"
+              ? "denied"
+              : "prompt",
         );
-        if (jumpDist > 300) return;
-
-        gazeSmoothedRef.current = { x: clampedX, y: clampedY };
-
-        const now = performance.now();
-        setGazePos({ x: clampedX, y: clampedY });
-        const r = feUpdate(clampedX, clampedY, now);
-        setDwellProgress(r.dwellProgress);
-        if (r.dwellProgress >= 1 && r.target && !dwellFiredRef.current) {
-          dwellFiredRef.current = true;
-          (r.target as HTMLElement).click();
-          _feDwellStart = now;
-          setTimeout(() => {
-            dwellFiredRef.current = false;
-          }, 800);
-        } else if (r.dwellProgress < 0.9) {
-          dwellFiredRef.current = false;
-        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPermState("prompt");
       });
-
-      // ── Start ────────────────────────────────────────────────────────────
-      await wg.begin();
-
-      // ── Post-init (must run after begin() resolves) ──────────────────────
-      // We show our own videoRef element during calibration (controlled via
-      // the `calibrating` state), so suppress all WebGazer-injected DOM.
-      wg.showVideo(false);
-      wg.showFaceOverlay(false);
-      wg.showFaceFeedbackBox(false);
-      wg.showPredictionPoints(false);
-      // clearData() is async. Wipe any garbage samples from TF.js init
-      await wg.clearData();
-      // Keep auto click-recording ON during calibration. That is exactly how
-      // WebGazer is designed to be used. Every dot click = one training sample.
-      // We stop recording after calibration completes in handleCalibDot.
-    } catch (err) {
-      gazeStartedRef.current = false;
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(`Eye tracking failed: ${msg}`);
-    }
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // ── MediaPipe hands init: uses @mediapipe/hands v0.4 (stable since 2021) ──
-  const startHands = useCallback(async () => {
-    if (handsStartedRef.current || !videoRef.current) return;
-    handsStartedRef.current = true;
-
-    try {
-      // Load @mediapipe/hands via script tag. More reliable than ES module
-      // import for WASM-based libraries; avoids CDN WASM/JS version mismatch
-      await new Promise<void>((resolve, reject) => {
-        if ((window as unknown as Record<string, unknown>).Hands) {
-          resolve();
-          return;
-        }
-        const s = document.createElement("script");
-        s.src = "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js";
-        s.crossOrigin = "anonymous";
-        s.onload = () => resolve();
-        s.onerror = () => reject(new Error("Failed to load @mediapipe/hands"));
-        document.head.appendChild(s);
-      });
-
-      type HandLandmark = { x: number; y: number; z: number };
-      type HandsResults = {
-        multiHandLandmarks?: HandLandmark[][];
-        multiHandedness?: { label: string; score: number }[];
-      };
-      type HandsInstance = {
-        setOptions: (o: Record<string, unknown>) => void;
-        onResults: (cb: (r: HandsResults) => void) => void;
-        send: (i: { image: HTMLVideoElement }) => Promise<void>;
-        close: () => void;
-      };
-
-      const HandsCtor = (
-        window as unknown as {
-          Hands: new (o: Record<string, unknown>) => HandsInstance;
-        }
-      ).Hands;
-
-      const hi = new HandsCtor({
-        locateFile: (file: string) =>
-          `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
-      });
-
-      hi.setOptions({
-        maxNumHands: 2,
-        modelComplexity: 1,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-      });
-
-      hi.onResults((results: HandsResults) => {
-        const now = performance.now();
-
-        if (
-          !results.multiHandLandmarks ||
-          results.multiHandLandmarks.length === 0
-        ) {
-          pinchLeft.current.update(null, now);
-          pinchRight.current.update(null, now);
-          return;
-        }
-
-        results.multiHandLandmarks.forEach((lm, i) => {
-          const side =
-            results.multiHandedness?.[i]?.label?.toLowerCase() ?? "right";
-          const detector =
-            side === "left" ? pinchLeft.current : pinchRight.current;
-          const result = detector.update(lm, now);
-
-          // SCROLL: pinch + drag, Vision Pro style
-          if (result.state === "dragging" && result.center) {
-            const sx = (1 - result.center.x) * window.innerWidth;
-            const sy = result.center.y * window.innerHeight;
-            const el = document.elementFromPoint(sx, sy);
-            const rawScroll = -result.delta.y * 700;
-            const scrollAmount =
-              Math.sign(rawScroll) * Math.min(Math.abs(rawScroll), 220);
-            const target = getScrollTarget(el);
-            if (target === window) {
-              window.scrollBy({ top: scrollAmount, behavior: "instant" });
-            } else {
-              (target as Element).scrollBy({
-                top: scrollAmount,
-                behavior: "instant",
-              });
-            }
-          }
-
-          // CLICK: pinch release
-          if (result.changed && result.state === "released" && result.center) {
-            const sx = (1 - result.center.x) * window.innerWidth;
-            const sy = result.center.y * window.innerHeight;
-            const el = document.elementFromPoint(sx, sy);
-            if (el) (el as HTMLElement).click();
-          }
-        });
-      });
-
-      handsRef.current = hi;
-      gestureRecRef.current = hi;
-      setHandsActive(true);
-      toast.success("Hand tracking active");
-
-      const video = videoRef.current;
-      let sending = false;
-
-      function loop() {
-        animIdRef.current = requestAnimationFrame(loop);
-        if (!video || video.readyState < 2 || sending) return;
-
-        const now = performance.now();
-        fpsFrames.current++;
-        if (now - fpsLast.current >= 1000) {
-          setFps(fpsFrames.current);
-          fpsFrames.current = 0;
-          fpsLast.current = now;
-        }
-
-        sending = true;
-        hi.send({ image: video })
-          .then(() => {
-            sending = false;
-          })
-          .catch(() => {
-            sending = false;
-          });
-      }
-
-      loop();
-    } catch (err) {
-      handsStartedRef.current = false;
-      const msg = err instanceof Error ? err.message : String(err);
-      toast.error(`Hand tracking failed: ${msg}`);
-    }
+  // ── Cleanup ───────────────────────────────────────────────────────────────
+  useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    };
   }, []);
 
-  // ── Camera init: getUserMedia MUST be the first call (no state/toast before it) ──
+  // ── Camera start ─────────────────────────────────────────────────────────
   const handleStart = useCallback(async () => {
-    // Guard against double-calls from rapid tapping
     if (startingRef.current) return;
     startingRef.current = true;
+    setStarted(true);
 
     if (!navigator?.mediaDevices?.getUserMedia) {
       startingRef.current = false;
-      setStarted(true);
       setCameraError(true);
       setCameraErrorDetail(
         "NotSupportedError: mediaDevices.getUserMedia unavailable. Are you on HTTPS?",
@@ -593,9 +305,8 @@ export default function VisionWeb() {
       return;
     }
 
-    let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "user",
           width: { ideal: 640 },
@@ -603,100 +314,78 @@ export default function VisionWeb() {
         },
         audio: false,
       });
-    } catch (err) {
-      const errName = err instanceof Error ? err.name : "UnknownError";
-      const errMsg = err instanceof Error ? err.message : String(err);
-      startingRef.current = false;
-      setStarted(true);
-      setCameraError(true);
-      setCameraErrorDetail(`${errName}: ${errMsg}`);
-      return;
-    }
-
-    // Save stream ref so we can stop tracks on unmount
-    streamRef.current = stream;
-    setStarted(true);
-
-    if (videoRef.current) {
-      videoRef.current.srcObject = stream;
-      await videoRef.current.play();
-    }
-
-    toast.success("Camera ready");
-    setReady(true);
-    setPanels([
-      {
-        id: "welcome",
-        title: "Welcome to VisionWeb",
-        x: 60,
-        y: 100,
-        content: "welcome",
-      },
-      {
-        id: "gestures",
-        title: "Gesture Reference",
-        x: 440,
-        y: 100,
-        content: "gestures",
-      },
-      { id: "focus", title: "System Status", x: 820, y: 100, content: "focus" },
-    ]);
-    // Start hands immediately (no calibration needed)
-    startHands();
-    // Start WebGazer. Wait 1.5s before showing calibration dots so TF.js
-    // face detection fully initializes. Then call clearData() to wipe any
-    // garbage auto-collected samples from the init period (all near 0,0).
-    // startGaze now awaits begin() internally, so by the time .then() fires:
-    // clearData and removeMouseEventListeners have already run inside startGaze.
-    startGaze().then(() => {
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+      setPermState("granted");
+      setReady(true);
       setCalibrating(true);
-    });
-  }, [startHands, startGaze]);
-
-  // ── Check permission state on mount: show denied UI before user clicks ──
-  useEffect(() => {
-    if (!navigator?.permissions?.query) return;
-    navigator.permissions
-      .query({ name: "camera" as PermissionName })
-      .then((status) => {
-        const state = status.state as "prompt" | "granted" | "denied";
-        setPermState(state);
-        // Never auto-launch. Always require button click so getUserMedia
-        // fires from a real user gesture
-        status.onchange = () => {
-          setPermState(status.state as "prompt" | "granted" | "denied");
-        };
-      })
-      .catch(() => setPermState("unknown"));
+    } catch (err) {
+      startingRef.current = false;
+      const e = err as { name?: string; message?: string };
+      setCameraError(true);
+      setCameraErrorDetail(`${e.name ?? "Error"}: ${e.message ?? String(err)}`);
+      if (e.name === "NotAllowedError" || e.name === "PermissionDeniedError") {
+        setPermState("denied");
+      }
+    }
   }, []);
 
-  const handleCalibDot = useCallback((idx: number, _e: React.MouseEvent) => {
-    // Auto click-recording is ON. WebGazer captures this click automatically.
-    // We just track UI state (which dot, how many clicks).
-    const newCount = Math.min(
-      calibDotsRef.current[idx] + 1,
-      CALIB_CLICKS_NEEDED,
-    );
-    calibDotsRef.current[idx] = newCount;
-    setCalibDots([...calibDotsRef.current]);
+  // ── Hand tracking + gaze: start after camera is ready ─────────────────────
+  useEffect(() => {
+    if (!ready) return;
+    hands.start().catch((err) => {
+      toast.error(`Hand tracking failed: ${err.message}`);
+    });
+  }, [ready, hands]);
 
-    const allDone = calibDotsRef.current.every((n) => n >= CALIB_CLICKS_NEEDED);
-    if (allDone) {
-      // Stop learning: removeMouseEventListeners is the correct 2.1.0 API
-      const wg = (window as unknown as Record<string, unknown>).webgazer as
-        | { removeMouseEventListeners: () => void }
-        | undefined;
-      wg?.removeMouseEventListeners();
-      // Video hides automatically, controlled by `calibrating` state
+  useEffect(() => {
+    if (!ready) return;
+    if (!webgazerReadyRef.current) return;
+    gaze.start().catch((err) => {
+      toast.error(`Eye tracking failed: ${err.message}`);
+    });
+  }, [ready, gaze]);
+
+  // Sync calibDots ref
+  useEffect(() => {
+    calibDotsRef.current = calibDots;
+  }, [calibDots]);
+
+  const handleCalibDot = useCallback(
+    (idx: number, e: React.MouseEvent<HTMLButtonElement>) => {
+      const next = [...calibDotsRef.current];
+      if (next[idx] >= CALIB_CLICKS_NEEDED) return;
+      next[idx] = Math.min(CALIB_CLICKS_NEEDED, next[idx] + 1);
+      setCalibDots(next);
+      gaze.record(e.clientX, e.clientY);
       calibViewportRef.current = {
         w: window.innerWidth,
         h: window.innerHeight,
       };
-      gazeSmoothedRef.current = { x: -1, y: -1 };
-      setCalibrating(false);
-      setGazeActive(true);
-      toast.success("Eye tracking active");
-    }
+      if (next.every((c) => c >= CALIB_CLICKS_NEEDED)) {
+        setTimeout(() => {
+          setCalibrating(false);
+          toast.success("Calibration complete");
+        }, 400);
+      }
+    },
+    [gaze],
+  );
+
+  // ── Panels ────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    setPanels([
+      {
+        id: "welcome",
+        title: "Welcome to VisionWeb",
+        x: 80,
+        y: 100,
+        content: "welcome",
+      },
+    ]);
   }, []);
 
   const closePanel = useCallback((id: string) => {
@@ -711,8 +400,8 @@ export default function VisionWeb() {
         {
           id,
           title,
-          x: 100 + Math.random() * 200,
-          y: 80 + Math.random() * 100,
+          x: 80 + p.length * 40,
+          y: 100 + p.length * 30,
           content,
         },
       ]);
@@ -729,9 +418,9 @@ export default function VisionWeb() {
       case "focus":
         return (
           <FocusContent
-            fps={fps}
-            gazeActive={gazeActive}
-            handsActive={handsActive}
+            fps={hands.fps}
+            gazeActive={gaze.started}
+            handsActive={hands.started}
           />
         );
       case "about":
@@ -746,8 +435,8 @@ export default function VisionWeb() {
     (() => void) | null,
   ];
   const toolbarItems: ToolbarItem[] = [
-    [Eye, "Gaze", gazeActive, null],
-    [Hand, "Hands", handsActive, null],
+    [Eye, "Gaze", gaze.started, null],
+    [Hand, "Hands", hands.started, null],
     [Plus, "New Panel", true, () => addPanel("about", "About VisionWeb")],
     [
       LayoutGrid,
@@ -770,12 +459,14 @@ export default function VisionWeb() {
           strategy="afterInteractive"
           onReady={() => {
             webgazerReadyRef.current = true;
+            gaze.start().catch((err) => {
+              toast.error(`Eye tracking failed: ${err.message}`);
+            });
           }}
         />
       )}
 
-      {/* Camera video: hidden normally, shown during calibration so the user
-          can position their face and verify they're in frame */}
+      {/* Camera video: hidden normally, shown during calibration */}
       <div
         style={{
           position: "fixed",
@@ -802,10 +493,9 @@ export default function VisionWeb() {
             width: 200,
             height: 150,
             objectFit: "cover",
-            transform: "scaleX(-1)", // mirror so it feels natural
+            transform: "scaleX(-1)",
           }}
         />
-        {/* Face position guide overlay */}
         {calibrating && (
           <div
             style={{
@@ -818,7 +508,6 @@ export default function VisionWeb() {
               pointerEvents: "none",
             }}
           >
-            {/* Oval face guide */}
             <svg
               width={200}
               height={150}
@@ -836,7 +525,6 @@ export default function VisionWeb() {
                 strokeDasharray="6 4"
               />
             </svg>
-            {/* Label */}
             <div
               style={{
                 position: "absolute",
@@ -857,7 +545,7 @@ export default function VisionWeb() {
         )}
       </div>
 
-      {/* Splash: pure inline styles, no Tailwind dependency */}
+      {/* Splash */}
       {!started && (
         <div
           style={{
@@ -880,7 +568,6 @@ export default function VisionWeb() {
               width: "100%",
             }}
           >
-            {/* Icon */}
             <div
               style={{
                 width: 80,
@@ -897,7 +584,6 @@ export default function VisionWeb() {
             >
               <Eye size={36} color="#818cf8" />
             </div>
-
             <h1
               style={{
                 fontSize: 30,
@@ -1033,7 +719,7 @@ export default function VisionWeb() {
         </div>
       )}
 
-      {/* Loading state: only after user clicked Start, while camera spins up */}
+      {/* Loading state */}
       {started && !ready && !cameraError && (
         <div className="fixed inset-0 z-[7000] flex items-center justify-center bg-zinc-950">
           <div className="text-center">
@@ -1045,16 +731,15 @@ export default function VisionWeb() {
         </div>
       )}
 
-      {/* Calibration screen: shown after camera starts, before main app */}
+      {/* Calibration */}
       {calibrating &&
         ready &&
         (() => {
           const doneCount = calibDots.filter(
             (n) => n >= CALIB_CLICKS_NEEDED,
           ).length;
-          // Current active dot = first dot that hasn't reached CALIB_CLICKS_NEEDED
           const activeIdx = calibDots.findIndex((n) => n < CALIB_CLICKS_NEEDED);
-          const circumference = 2 * Math.PI * 18; // radius=18
+          const circumference = 2 * Math.PI * 18;
           return (
             <div
               style={{
@@ -1065,7 +750,6 @@ export default function VisionWeb() {
                 fontFamily: "Inter, sans-serif",
               }}
             >
-              {/* Header */}
               <div
                 style={{
                   position: "absolute",
@@ -1107,10 +791,8 @@ export default function VisionWeb() {
                     lineHeight: 1.5,
                   }}
                 >
-                  Check the preview in the bottom-right corner. Green box means
-                  your face is detected. Red box means it is not.
+                  Check the preview in the bottom-right corner.
                 </p>
-                {/* Progress bar */}
                 <div
                   style={{ display: "flex", gap: 6, justifyContent: "center" }}
                 >
@@ -1143,7 +825,6 @@ export default function VisionWeb() {
                 </p>
               </div>
 
-              {/* Dots: only show completed ones + current active */}
               {CALIB_POSITIONS.map((pos, idx) => {
                 const isDone = calibDots[idx] >= CALIB_CLICKS_NEEDED;
                 const isActive = idx === activeIdx;
@@ -1176,7 +857,6 @@ export default function VisionWeb() {
                     }}
                   >
                     {isDone ? (
-                      // Done state: solid green dot with checkmark
                       <svg width={24} height={24} viewBox="0 0 24 24">
                         <circle
                           cx={12}
@@ -1194,7 +874,6 @@ export default function VisionWeb() {
                         />
                       </svg>
                     ) : (
-                      // Active state: pulsing dot with SVG progress ring + click count
                       <svg
                         width={48}
                         height={48}
@@ -1205,7 +884,6 @@ export default function VisionWeb() {
                             : "none",
                         }}
                       >
-                        {/* Background track */}
                         <circle
                           cx={24}
                           cy={24}
@@ -1214,7 +892,6 @@ export default function VisionWeb() {
                           stroke="rgba(99,102,241,0.3)"
                           strokeWidth={2}
                         />
-                        {/* Fill ring: progress arc */}
                         {clicks > 0 && (
                           <circle
                             cx={24}
@@ -1232,14 +909,12 @@ export default function VisionWeb() {
                             }}
                           />
                         )}
-                        {/* Center dot */}
                         <circle
                           cx={24}
                           cy={24}
                           r={7}
                           fill="rgba(99,102,241,1)"
                         />
-                        {/* Click count label */}
                         <text
                           x={24}
                           y={40}
@@ -1263,7 +938,6 @@ export default function VisionWeb() {
       {/* Main app */}
       {ready && !calibrating && (
         <>
-          {/* Nav */}
           <nav className="fixed top-0 left-0 right-0 z-50 backdrop-blur-md bg-zinc-950/80 border-b border-zinc-800/50 px-6 py-3 flex items-center justify-between">
             <span className="font-bold text-sm tracking-tight text-white flex items-center gap-2">
               <Eye size={16} className="text-indigo-400" /> VisionWeb
@@ -1271,15 +945,15 @@ export default function VisionWeb() {
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                 <div
-                  className={`w-1.5 h-1.5 rounded-full ${gazeActive ? "bg-emerald-400" : "bg-zinc-600"}`}
+                  className={`w-1.5 h-1.5 rounded-full ${gaze.started ? "bg-emerald-400" : "bg-zinc-600"}`}
                 />
-                {gazeActive ? "Eyes active" : "Calibrating…"}
+                {gaze.started ? "Eyes active" : "Calibrating…"}
               </div>
               <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-violet-500/10 text-violet-400 border border-violet-500/20">
                 <div
-                  className={`w-1.5 h-1.5 rounded-full ${handsActive ? "bg-violet-400" : "bg-zinc-600"}`}
+                  className={`w-1.5 h-1.5 rounded-full ${hands.started ? "bg-violet-400" : "bg-zinc-600"}`}
                 />
-                {handsActive ? "Hands active" : "Loading…"}
+                {hands.started ? "Hands active" : "Loading…"}
               </div>
               <button
                 onClick={() => setSettingsOpen((s) => !s)}
@@ -1296,7 +970,6 @@ export default function VisionWeb() {
             </div>
           </nav>
 
-          {/* Background */}
           <div
             className="fixed inset-0 -z-10"
             style={{
@@ -1307,7 +980,6 @@ export default function VisionWeb() {
             }}
           />
 
-          {/* Toolbar */}
           <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 glass rounded-2xl px-4 py-3 shadow-[0_8px_32px_rgba(0,0,0,0.4)]">
             {toolbarItems.map(([Icon, label, active, action]) => (
               <button
@@ -1333,16 +1005,16 @@ export default function VisionWeb() {
           <div
             className="fixed pointer-events-none z-[9000]"
             style={{
-              left: gazePos.x - 12,
-              top: gazePos.y - 12,
+              left: gaze.gaze.x - 12,
+              top: gaze.gaze.y - 12,
               width: 24,
               height: 24,
-              opacity: gazeActive ? 1 : 0,
+              opacity: gaze.started ? 1 : 0,
               transition: "opacity 0.2s",
             }}
           >
             <div className="w-6 h-6 rounded-full border-2 border-indigo-400/70 bg-indigo-400/10" />
-            {dwellProgress > 0.02 && (
+            {dwell.dwellProgress > 0.02 && (
               <svg
                 className="absolute inset-0 -rotate-90"
                 width="24"
@@ -1356,14 +1028,13 @@ export default function VisionWeb() {
                   fill="none"
                   stroke="rgba(99,102,241,0.8)"
                   strokeWidth="2"
-                  strokeDasharray={`${dwellProgress * 62.8} 62.8`}
+                  strokeDasharray={`${dwell.dwellProgress * 62.8} 62.8`}
                   strokeLinecap="round"
                 />
               </svg>
             )}
           </div>
 
-          {/* Spatial panels */}
           {panels.map((def) => (
             <SpatialPanel
               key={def.id}
@@ -1372,12 +1043,12 @@ export default function VisionWeb() {
               initialX={def.x}
               initialY={def.y}
               onClose={() => closePanel(def.id)}
+              gazeFocused={dwell.focused?.id === def.id}
             >
               {renderPanelContent(def)}
             </SpatialPanel>
           ))}
 
-          {/* Debug overlay */}
           {debugOpen && (
             <div className="fixed top-16 right-4 z-[9001] w-64 glass rounded-2xl p-4 text-xs font-mono space-y-1.5">
               <div className="text-zinc-400 font-semibold text-[11px] mb-2 flex items-center gap-2">
@@ -1385,12 +1056,12 @@ export default function VisionWeb() {
               </div>
               {(
                 [
-                  ["Gaze X", gazePos.x.toFixed(0), true],
-                  ["Gaze Y", gazePos.y.toFixed(0), true],
-                  ["FPS", String(fps), fps > 20],
-                  ["Eye tracking", gazeActive ? "ON" : "OFF", gazeActive],
-                  ["Hands", handsActive ? "ON" : "OFF", handsActive],
-                  ["Dwell", `${(dwellProgress * 100).toFixed(0)}%`, true],
+                  ["Gaze X", gaze.gaze.x.toFixed(0), true],
+                  ["Gaze Y", gaze.gaze.y.toFixed(0), true],
+                  ["FPS", String(hands.fps), hands.fps > 20],
+                  ["Eye tracking", gaze.started ? "ON" : "OFF", gaze.started],
+                  ["Hands", hands.started ? "ON" : "OFF", hands.started],
+                  ["Dwell", `${(dwell.dwellProgress * 100).toFixed(0)}%`, true],
                   ["Panels", String(panels.length), true],
                 ] as [string, string, boolean][]
               ).map(([label, val, ok]) => (
@@ -1404,7 +1075,6 @@ export default function VisionWeb() {
             </div>
           )}
 
-          {/* Settings overlay */}
           {settingsOpen && (
             <div className="fixed top-1/2 right-6 -translate-y-1/2 z-[9001] w-72 glass rounded-2xl p-5">
               <div className="flex items-center justify-between mb-4">
@@ -1447,8 +1117,7 @@ export default function VisionWeb() {
             </div>
           )}
 
-          {/* Hint: calibrate by clicking around */}
-          {gazeActive && (
+          {gaze.started && (
             <div
               className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 px-4 py-2 rounded-full glass text-xs text-zinc-500 pointer-events-none"
               style={{ animation: "fadeOut 1s ease 4s forwards" }}
@@ -1468,7 +1137,6 @@ export default function VisionWeb() {
           50%  { box-shadow: 0 0 0 16px rgba(99,102,241,0), 0 0 32px rgba(99,102,241,0.3); }
           100% { box-shadow: 0 0 0 0 rgba(99,102,241,0), 0 0 24px rgba(99,102,241,0.5); }
         }
-        /* Force-hide all WebGazer DOM elements */
         #webgazerVideoContainer,
         #webgazerFaceOverlay,
         #webgazerFaceFeedbackBox,

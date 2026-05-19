@@ -1,9 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { Eye, Hand, Sparkles } from "lucide-react";
+import { Eye, Hand, Sparkles, Layers } from "lucide-react";
 
 const features = [
+  {
+    icon: Layers,
+    color: "#fbbf24",
+    bg: "rgba(251,191,36,0.1)",
+    border: "rgba(251,191,36,0.25)",
+    title: "Toolkit",
+    description:
+      "Every primitive in the library — gaze + pinch, two-hand zoom, glass hands, pinch-to-scroll, dwell — running live on one page with code snippets.",
+    href: "/toolkit",
+    cta: "Open Toolkit",
+    ctaColor: "#f59e0b",
+    ctaShadow: "rgba(251,191,36,0.35)",
+  },
   {
     icon: Eye,
     color: "#818cf8",
@@ -121,7 +134,7 @@ export default function Home() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 1fr",
+            gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
             gap: 16,
             marginBottom: 40,
           }}

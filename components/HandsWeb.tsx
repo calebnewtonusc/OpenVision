@@ -1,37 +1,102 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { PinchDetector } from "@/hooks/usePinch";
+import {
+  useHandTracking,
+  useGazeTracking,
+  useDwellClick,
+  useGazePinchClick,
+  useTwoHandGesture,
+  usePinchScroll,
+  classifyGesture,
+  drawGlassHand,
+  GazeCursor,
+  GazeCalibration,
+  GESTURE_LABELS,
+  HAND_CONNECTIONS,
+  FINGER_TIPS,
+  type GestureName,
+  type HandData,
+  type PinchResult,
+  type RGB,
+} from "@/lib/openvision";
+import Script from "next/script";
 import { toast } from "sonner";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const CONNECTIONS: [number, number][] = [
-  [0, 1],
-  [1, 2],
-  [2, 3],
-  [3, 4],
-  [0, 5],
-  [5, 6],
-  [6, 7],
-  [7, 8],
-  [5, 9],
-  [9, 10],
-  [10, 11],
-  [11, 12],
-  [9, 13],
-  [13, 14],
-  [14, 15],
-  [15, 16],
-  [13, 17],
-  [17, 18],
-  [18, 19],
-  [19, 20],
-  [0, 17],
-];
-const FINGER_TIPS = [4, 8, 12, 16, 20];
 const TIP_COLORS = ["#f59e0b", "#6366f1", "#ec4899", "#10b981", "#a855f7"];
-const MODES = ["particles", "draw", "bubbles", "portal"] as const;
+const MODES = [
+  "glass",
+  "scroll",
+  "particles",
+  "draw",
+  "bubbles",
+  "portal",
+] as const;
 type Mode = (typeof MODES)[number];
+
+const SCROLL_FEED: { title: string; body: string; tag: string }[] = [
+  {
+    title: "On-device gaze tracking",
+    body: "WebGazer fits a ridge regression model to your face landmarks during calibration. Nine dots, five clicks each, 45 samples — everything runs in your tab.",
+    tag: "Eye tracking",
+  },
+  {
+    title: "Pinch detection without an SDK",
+    body: "PinchDetector measures thumb-to-index distance, normalizes by palm scale, and uses hysteresis thresholds so the gesture doesn't flicker at the boundary.",
+    tag: "Gestures",
+  },
+  {
+    title: "Why spatial UIs need motion damping",
+    body: "Raw landmarks jitter 2 to 4 pixels per frame at 30fps. Without smoothing, every cursor sits in a permanent earthquake. Exponential smoothing fixes it cheaply.",
+    tag: "UX",
+  },
+  {
+    title: "MediaPipe Hands at 30fps",
+    body: "21 landmarks per hand, two hands, in JavaScript. The trick is keeping the inference loop async and never letting the main thread block on a send call.",
+    tag: "Perf",
+  },
+  {
+    title: "Kalman filter for gaze",
+    body: "Gaze data is noisy on the order of head size, not pixel size. A small Kalman pass with a tuned process variance feels like the cursor knows what you mean.",
+    tag: "Signal",
+  },
+  {
+    title: "Dwell timing that respects intent",
+    body: "1200ms feels intentional. 800ms feels accidental. Vision Pro uses around 1s with a visible progress ring so the user can bail out before commit.",
+    tag: "UX",
+  },
+  {
+    title: "Detecting handedness from one camera",
+    body: "MediaPipe returns a handedness label, but it's noisy near the frame edge. Voting across the last five frames is more stable than trusting the latest result.",
+    tag: "Tracking",
+  },
+  {
+    title: "A virtual keyboard for eyes",
+    body: "Big keys, predictive completion, and a dwell-to-confirm pattern. The interesting design constraint is that the user cannot look at the spacebar and the word simultaneously.",
+    tag: "Input",
+  },
+  {
+    title: "Why Vision Pro feels different",
+    body: "It is not the optics. It is that gaze plus pinch removes the cursor as a mental model. You think 'that one' and the system already knows.",
+    tag: "Spatial",
+  },
+  {
+    title: "Permissions and privacy",
+    body: "Camera access stays on the device. No frame ever leaves the browser. The model runs in WebAssembly, landmarks live in memory, and the tab can disable it instantly.",
+    tag: "Privacy",
+  },
+  {
+    title: "Calibration that doesn't fight you",
+    body: "Show the dot, show face detection feedback, count clicks visibly. Quiet failures during calibration are the worst category of bug for eye tracking apps.",
+    tag: "UX",
+  },
+  {
+    title: "Where OpenVision goes next",
+    body: "Two-hand zoom and rotate, foveated rendering for spatial panels, multi-monitor gaze handoff. The browser already has everything the headset has, minus the optics.",
+    tag: "Roadmap",
+  },
+];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface LM {
@@ -75,68 +140,16 @@ interface DrawStroke {
 }
 
 interface Gesture {
-  left: string;
-  right: string;
+  left: GestureName;
+  right: GestureName;
 }
-
-// ── Gesture classifier ────────────────────────────────────────────────────────
-function dist(a: LM, b: LM) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-function classifyGesture(lm: LM[]): string {
-  if (!lm || lm.length < 21) return "none";
-  const wrist = lm[0];
-  // Finger extended = tip is above knuckle (lower y = higher on screen)
-  const extended = [
-    // Thumb: compare tip to base
-    dist(lm[4], lm[0]) > dist(lm[3], lm[0]),
-    lm[8].y < lm[6].y, // index
-    lm[12].y < lm[10].y, // middle
-    lm[16].y < lm[14].y, // ring
-    lm[20].y < lm[18].y, // pinky
-  ];
-  const [thumb, index, middle, ring, pinky] = extended;
-  const count = extended.filter(Boolean).length;
-  const pinchRatio = dist(lm[4], lm[8]) / Math.max(dist(lm[0], lm[9]), 0.001);
-
-  if (pinchRatio < 0.38) return "pinch";
-  if (!thumb && !index && !middle && !ring && !pinky) return "fist";
-  if (count === 5) return "open";
-  if (index && !middle && !ring && !pinky) return "point";
-  if (index && middle && !ring && !pinky) return "peace";
-  if (thumb && !index && !middle && !ring && !pinky) return "thumbs_up";
-  if (!thumb && !index && !middle && !ring && pinky) return "pinky";
-  if (count >= 4) return "almost_open";
-  return "custom";
-}
-
-const GESTURE_LABELS: Record<string, string> = {
-  none: "",
-  fist: "Fist",
-  open: "Open",
-  point: "Point",
-  peace: "Peace",
-  thumbs_up: "Thumbs up",
-  pinky: "Pinky up",
-  pinch: "Pinch",
-  almost_open: "Almost open",
-  custom: "",
-};
 
 // ── Main component ─────────────────────────────────────────────────────────────
 export default function HandsWeb() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef(0);
-  const handsRef = useRef<{
-    send: (i: { image: HTMLVideoElement }) => Promise<void>;
-    close: () => void;
-  } | null>(null);
+  const drawRafRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
-  const sendingRef = useRef(false);
-  const pinchL = useRef(new PinchDetector());
-  const pinchR = useRef(new PinchDetector());
 
   // Rendering state (refs = no re-render cost)
   const particles = useRef<Particle[]>([]);
@@ -144,20 +157,63 @@ export default function HandsWeb() {
   const bubbleId = useRef(0);
   const strokes = useRef<DrawStroke[]>([]);
   const currentStroke = useRef<DrawStroke | null>(null);
-  const handsData = useRef<{ lm: LM[]; side: string }[]>([]);
+  const handsData = useRef<HandData[]>([]);
   const gestureRef = useRef<Gesture>({ left: "none", right: "none" });
+  const pinchStateRef = useRef<{
+    left: PinchResult["state"] | null;
+    right: PinchResult["state"] | null;
+  }>({ left: null, right: null });
   const portalAngle = useRef(0);
   const palmWipeRef = useRef(false);
+  const scrollContentRef = useRef<HTMLDivElement>(null);
+  const webgazerReadyRef = useRef(false);
 
   // React state (UI only)
   const [started, setStarted] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [mode, setMode] = useState<Mode>("particles");
-  const [fps, setFps] = useState(0);
-  const [handCount, setHandCount] = useState(0);
-  const [gesture, setGesture] = useState<Gesture>({ left: "", right: "" });
-  const fpsFrames = useRef(0);
-  const fpsLast = useRef(performance.now());
+  const [mode, setMode] = useState<Mode>("glass");
+  const [spatialOn, setSpatialOn] = useState(false);
+  const [calibrating, setCalibrating] = useState(false);
+
+  // Pinch-to-scroll handler. Enabled flag is read live from modeRef.
+  const pinchScroll = usePinchScroll({
+    target: scrollContentRef,
+    enabled: mode === "scroll",
+  });
+
+  // Optional spatial layer: gaze, dwell, gaze + pinch, calibration.
+  const dwell = useDwellClick({ dwellMs: 1200 });
+  const gaze = useGazeTracking({ onSample: (s) => dwell.feed(s) });
+  const gazePinch = useGazePinchClick({
+    focused: dwell.focused,
+    enabled: spatialOn,
+  });
+  const twoHand = useTwoHandGesture();
+
+  // Lib hook: handles MediaPipe loading, run-loop, pinch detection, and gestures.
+  const handTracking = useHandTracking({
+    videoRef,
+    onFrame: (f) => {
+      handsData.current = f.hands;
+      gestureRef.current = f.gestures;
+      pinchStateRef.current = {
+        left: f.pinches.left?.state ?? null,
+        right: f.pinches.right?.state ?? null,
+      };
+      pinchScroll.apply(f.pinches.left);
+      pinchScroll.apply(f.pinches.right);
+      twoHand.update(f.pinches);
+      if (spatialOn) gazePinch.feed(f.pinches);
+    },
+  });
+
+  const fps = handTracking.fps;
+  const handCount = handTracking.handCount;
+  const gesture = {
+    left: GESTURE_LABELS[handTracking.gesture.left] ?? "",
+    right: GESTURE_LABELS[handTracking.gesture.right] ?? "",
+  };
+
   const modeRef = useRef<Mode>("particles");
 
   // Keep modeRef in sync
@@ -201,7 +257,11 @@ export default function HandsWeb() {
     const my = (y: number) => y * H;
 
     // ── Background ──────────────────────────────────────────────────────────
-    if (currentMode === "draw") {
+    if (currentMode === "glass") {
+      // Don't fill: the video element underneath shows through the canvas.
+      // A very subtle dark tint helps the glass effect read.
+      ctx.fillStyle = "rgba(0,0,0,0.12)";
+    } else if (currentMode === "draw") {
       ctx.fillStyle = "rgba(9,9,11,0.04)";
     } else if (currentMode === "portal") {
       ctx.fillStyle = "rgba(9,9,11,0.15)";
@@ -209,6 +269,31 @@ export default function HandsWeb() {
       ctx.fillStyle = "rgba(9,9,11,0.75)";
     }
     ctx.fillRect(0, 0, W, H);
+
+    // ── GLASS mode ──────────────────────────────────────────────────────────
+    if (currentMode === "glass") {
+      const pulse = now * 0.005;
+      for (const hand of hands) {
+        const accent: RGB =
+          hand.side === "left" ? [167, 139, 250] : [52, 211, 153];
+        const baseHue = hand.side === "left" ? 265 : 160;
+        const sidePinch =
+          hand.side === "left"
+            ? pinchStateRef.current.left
+            : pinchStateRef.current.right;
+        const pinched = sidePinch
+          ? ["pinching", "holding", "dragging"].includes(sidePinch)
+          : false;
+        drawGlassHand(ctx, hand.lm, {
+          mx,
+          my,
+          accent,
+          baseHue,
+          pinched,
+          pulsePhase: pulse,
+        });
+      }
+    }
 
     // ── PARTICLES mode ──────────────────────────────────────────────────────
     if (currentMode === "particles") {
@@ -504,7 +589,7 @@ export default function HandsWeb() {
         ctx.shadowColor = "#6366f1";
         ctx.strokeStyle = "rgba(99,102,241,0.5)";
         ctx.lineWidth = 2;
-        for (const [a, b] of CONNECTIONS) {
+        for (const [a, b] of HAND_CONNECTIONS) {
           ctx.beginPath();
           ctx.moveTo(mx(lm2[a].x), my(lm2[a].y));
           ctx.lineTo(mx(lm2[b].x), my(lm2[b].y));
@@ -543,8 +628,12 @@ export default function HandsWeb() {
       }
     }
 
-    // ── Skeleton overlay (all modes except draw) ────────────────────────────
-    if (currentMode !== "draw" && currentMode !== "portal") {
+    // ── Skeleton overlay (all modes except draw/portal/glass) ───────────────
+    if (
+      currentMode !== "draw" &&
+      currentMode !== "portal" &&
+      currentMode !== "glass"
+    ) {
       for (const hand of hands) {
         const lm = hand.lm;
         const color = hand.side === "left" ? "#a78bfa" : "#34d399";
@@ -554,7 +643,7 @@ export default function HandsWeb() {
         ctx.shadowColor = color;
         ctx.strokeStyle = `${color}60`;
         ctx.lineWidth = 1.5;
-        for (const [a, b] of CONNECTIONS) {
+        for (const [a, b] of HAND_CONNECTIONS) {
           ctx.beginPath();
           ctx.moveTo(mx(lm[a].x), my(lm[a].y));
           ctx.lineTo(mx(lm[b].x), my(lm[b].y));
@@ -590,7 +679,7 @@ export default function HandsWeb() {
     }
   }, [spawnBubble]);
 
-  // ── MediaPipe init ─────────────────────────────────────────────────────────
+  // ── Camera + tracking init via useHandTracking ─────────────────────────────
   const start = useCallback(async () => {
     setLoading(true);
     let stream: MediaStream;
@@ -615,110 +704,19 @@ export default function HandsWeb() {
       await videoRef.current.play();
     }
 
-    await new Promise<void>((resolve, reject) => {
-      if ((window as unknown as Record<string, unknown>).Hands) {
-        resolve();
-        return;
-      }
-      const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js";
-      s.crossOrigin = "anonymous";
-      s.onload = () => resolve();
-      s.onerror = () => reject(new Error("Failed to load MediaPipe"));
-      document.head.appendChild(s);
-    });
-
-    type HandLM = { x: number; y: number; z: number };
-    type HResults = {
-      multiHandLandmarks?: HandLM[][];
-      multiHandedness?: { label: string }[];
-    };
-    type HInstance = {
-      setOptions: (o: Record<string, unknown>) => void;
-      onResults: (cb: (r: HResults) => void) => void;
-      send: (i: { image: HTMLVideoElement }) => Promise<void>;
-      close: () => void;
-    };
-
-    const HC = (
-      window as unknown as {
-        Hands: new (o: Record<string, unknown>) => HInstance;
-      }
-    ).Hands;
-    const hi = new HC({
-      locateFile: (f: string) =>
-        `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`,
-    });
-    hi.setOptions({
-      maxNumHands: 2,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.6,
-    });
-
-    hi.onResults((results: HResults) => {
-      const now = performance.now();
-      fpsFrames.current++;
-      if (now - fpsLast.current >= 1000) {
-        setFps(fpsFrames.current);
-        fpsFrames.current = 0;
-        fpsLast.current = now;
-      }
-
-      if (!results.multiHandLandmarks?.length) {
-        pinchL.current.update(null, now);
-        pinchR.current.update(null, now);
-        handsData.current = [];
-        setHandCount(0);
-        gestureRef.current = { left: "none", right: "none" };
-        setGesture({ left: "", right: "" });
-        return;
-      }
-
-      const newHands: { lm: LM[]; side: string }[] = [];
-      const newGesture = {
-        left: gestureRef.current.left,
-        right: gestureRef.current.right,
-      };
-
-      results.multiHandLandmarks.forEach((lm, i) => {
-        const side =
-          results.multiHandedness?.[i]?.label?.toLowerCase() ?? "right";
-        newHands.push({ lm: lm as LM[], side });
-
-        const g = classifyGesture(lm as LM[]);
-        if (side === "left") newGesture.left = g;
-        else newGesture.right = g;
-
-        const det = side === "left" ? pinchL.current : pinchR.current;
-        det.update(lm, now);
-      });
-
-      handsData.current = newHands;
-      gestureRef.current = newGesture;
-      setHandCount(newHands.length);
-      setGesture({
-        left: GESTURE_LABELS[newGesture.left] || newGesture.left,
-        right: GESTURE_LABELS[newGesture.right] || newGesture.right,
-      });
-    });
-
-    handsRef.current = hi;
-    const video = videoRef.current!;
-
-    function loop() {
-      animRef.current = requestAnimationFrame(loop);
-      drawFrame();
-      if (video.readyState < 2 || sendingRef.current) return;
-      sendingRef.current = true;
-      hi.send({ image: video })
-        .then(() => {
-          sendingRef.current = false;
-        })
-        .catch(() => {
-          sendingRef.current = false;
-        });
+    try {
+      await handTracking.start();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Hand tracking failed");
+      setLoading(false);
+      return;
     }
+
+    // Independent draw loop (lib hook runs its own inference loop)
+    const loop = () => {
+      drawRafRef.current = requestAnimationFrame(loop);
+      drawFrame();
+    };
     loop();
 
     // Seed bubbles for bubbles mode
@@ -727,13 +725,12 @@ export default function HandsWeb() {
     setStarted(true);
     setLoading(false);
     toast.success("Hand tracking active");
-  }, [drawFrame, spawnBubble]);
+  }, [drawFrame, spawnBubble, handTracking]);
 
   useEffect(() => {
     return () => {
-      cancelAnimationFrame(animRef.current);
+      cancelAnimationFrame(drawRafRef.current);
       streamRef.current?.getTracks().forEach((t) => t.stop());
-      handsRef.current?.close();
     };
   }, []);
 
@@ -749,6 +746,37 @@ export default function HandsWeb() {
         flexDirection: "column",
       }}
     >
+      {/* Lazy-load WebGazer once the user opts into spatial mode */}
+      {spatialOn && (
+        <Script
+          src="https://cdn.jsdelivr.net/npm/webgazer@2.1.0/dist/webgazer.js"
+          strategy="afterInteractive"
+          onReady={() => {
+            webgazerReadyRef.current = true;
+          }}
+        />
+      )}
+
+      {/* Gaze cursor: only renders when gaze is active */}
+      {spatialOn && gaze.started && (
+        <GazeCursor
+          x={gaze.gaze.x}
+          y={gaze.gaze.y}
+          dwellProgress={dwell.dwellProgress}
+        />
+      )}
+
+      {/* 9-point gaze calibration overlay */}
+      <GazeCalibration
+        active={calibrating}
+        onRecord={(x, y) => gaze.record(x, y)}
+        onComplete={() => {
+          setCalibrating(false);
+          toast.success("Calibration complete");
+        }}
+        onCancel={() => setCalibrating(false)}
+      />
+
       {/* Header */}
       <div
         style={{
@@ -819,6 +847,7 @@ export default function HandsWeb() {
               {MODES.map((m) => (
                 <button
                   key={m}
+                  data-gaze-target="true"
                   onClick={() => {
                     setMode(m);
                     if (m !== "draw") {
@@ -847,6 +876,76 @@ export default function HandsWeb() {
                 </button>
               ))}
             </div>
+
+            {twoHand.state.active && (
+              <div
+                style={{
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  background: "rgba(251,191,36,0.14)",
+                  border: "1px solid rgba(251,191,36,0.35)",
+                  color: "#fbbf24",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  fontFamily:
+                    "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace",
+                }}
+              >
+                2H · {twoHand.state.scale.toFixed(2)}x ·{" "}
+                {((twoHand.state.rotation * 180) / Math.PI).toFixed(0)}°
+              </div>
+            )}
+
+            {/* Spatial toggle: enables gaze + dwell + gaze-pinch click */}
+            <button
+              onClick={() => {
+                if (spatialOn) {
+                  setSpatialOn(false);
+                  return;
+                }
+                setSpatialOn(true);
+                if (!gaze.started) {
+                  gaze.start().catch((err) => {
+                    toast.error(
+                      `Gaze tracking unavailable: ${err instanceof Error ? err.message : String(err)}`,
+                    );
+                    setSpatialOn(false);
+                  });
+                }
+              }}
+              style={{
+                padding: "5px 14px",
+                borderRadius: 10,
+                border: `1px solid ${spatialOn ? "rgba(99,102,241,0.45)" : "rgba(255,255,255,0.08)"}`,
+                background: spatialOn
+                  ? "linear-gradient(135deg, rgba(99,102,241,0.3), rgba(168,85,247,0.18))"
+                  : "rgba(255,255,255,0.04)",
+                color: spatialOn ? "#c4b5fd" : "#71717a",
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
+            >
+              {spatialOn ? "Spatial: ON" : "Spatial: OFF"}
+            </button>
+
+            {spatialOn && gaze.started && (
+              <button
+                onClick={() => setCalibrating(true)}
+                style={{
+                  padding: "5px 12px",
+                  borderRadius: 10,
+                  border: "1px solid rgba(167,139,250,0.3)",
+                  background: "rgba(167,139,250,0.12)",
+                  color: "#c4b5fd",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                }}
+              >
+                Calibrate
+              </button>
+            )}
 
             {/* Gesture indicators */}
             {(gesture.left || gesture.right) && (
@@ -939,18 +1038,33 @@ export default function HandsWeb() {
 
       {/* Canvas */}
       <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+        {/* Hidden video for MediaPipe input, visible in glass mode as backdrop */}
         <video
           ref={videoRef}
           autoPlay
           playsInline
           muted
-          style={{
-            position: "absolute",
-            opacity: 0,
-            pointerEvents: "none",
-            width: 1,
-            height: 1,
-          }}
+          style={
+            mode === "glass" && started
+              ? {
+                  position: "absolute",
+                  inset: 0,
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  transform: "scaleX(-1)",
+                  filter: "saturate(0.6) brightness(0.55) contrast(1.08)",
+                  zIndex: 0,
+                  pointerEvents: "none",
+                }
+              : {
+                  position: "absolute",
+                  opacity: 0,
+                  pointerEvents: "none",
+                  width: 1,
+                  height: 1,
+                }
+          }
         />
 
         {!started ? (
@@ -1013,6 +1127,17 @@ export default function HandsWeb() {
                   margin: "0 0 8px",
                 }}
               >
+                <span style={{ color: "#c4b5fd", fontWeight: 600 }}>Glass</span>{" "}
+                : frosted glass hands overlaid on your camera
+              </p>
+              <p
+                style={{
+                  color: "#52525b",
+                  fontSize: 13,
+                  lineHeight: 1.7,
+                  margin: "0 0 8px",
+                }}
+              >
                 <span style={{ color: "#a78bfa", fontWeight: 600 }}>
                   Particles
                 </span>{" "}
@@ -1047,13 +1172,43 @@ export default function HandsWeb() {
                   color: "#52525b",
                   fontSize: 13,
                   lineHeight: 1.7,
-                  margin: "0 0 32px",
+                  margin: "0 0 8px",
                 }}
               >
                 <span style={{ color: "#6366f1", fontWeight: 600 }}>
                   Portal
                 </span>{" "}
                 : hands glow through the void
+              </p>
+              <p
+                style={{
+                  color: "#52525b",
+                  fontSize: 13,
+                  lineHeight: 1.7,
+                  margin: "0 0 8px",
+                }}
+              >
+                <span style={{ color: "#fbbf24", fontWeight: 600 }}>
+                  Scroll
+                </span>{" "}
+                : pinch and move up or down to scroll a real feed
+              </p>
+              <p
+                style={{
+                  color: "#3f3f46",
+                  fontSize: 12,
+                  lineHeight: 1.7,
+                  margin: "0 0 32px",
+                  paddingTop: 8,
+                  borderTop: "1px solid rgba(255,255,255,0.05)",
+                }}
+              >
+                Toggle{" "}
+                <span style={{ color: "#c4b5fd", fontWeight: 600 }}>
+                  Spatial
+                </span>{" "}
+                in the header to add eye tracking, dwell-click, and look + pinch
+                across any mode.
               </p>
               <button
                 onClick={start}
@@ -1090,8 +1245,129 @@ export default function HandsWeb() {
               inset: 0,
               width: "100%",
               height: "100%",
+              zIndex: 1,
             }}
           />
+        )}
+
+        {started && mode === "scroll" && (
+          <div
+            ref={scrollContentRef}
+            style={{
+              position: "absolute",
+              top: 24,
+              bottom: 24,
+              left: "50%",
+              transform: "translateX(-50%)",
+              width: "min(680px, calc(100% - 32px))",
+              overflowY: "auto",
+              borderRadius: 20,
+              background: "rgba(9,9,11,0.78)",
+              backdropFilter: "blur(14px)",
+              WebkitBackdropFilter: "blur(14px)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              boxShadow: "0 32px 80px rgba(0,0,0,0.55)",
+              zIndex: 5,
+            }}
+          >
+            <div style={{ padding: "28px 28px 14px" }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  color: "#a78bfa",
+                  marginBottom: 8,
+                }}
+              >
+                Pinch and drag to scroll
+              </div>
+              <h2
+                style={{
+                  fontSize: 28,
+                  fontWeight: 700,
+                  color: "#fafafa",
+                  letterSpacing: "-0.02em",
+                  margin: 0,
+                  lineHeight: 1.15,
+                }}
+              >
+                Field notes on building OpenVision
+              </h2>
+              <p
+                style={{
+                  fontSize: 13,
+                  color: "#71717a",
+                  marginTop: 10,
+                  lineHeight: 1.55,
+                }}
+              >
+                Close your thumb and index finger, then move your hand up or
+                down. Trackpad still works too.
+              </p>
+            </div>
+
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+                padding: "0 20px 28px",
+              }}
+            >
+              {SCROLL_FEED.map((item) => (
+                <article
+                  key={item.title}
+                  style={{
+                    padding: 18,
+                    borderRadius: 16,
+                    background: "rgba(255,255,255,0.035)",
+                    border: "1px solid rgba(255,255,255,0.06)",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "inline-block",
+                      fontSize: 10,
+                      fontWeight: 600,
+                      letterSpacing: "0.06em",
+                      textTransform: "uppercase",
+                      color: "#818cf8",
+                      background: "rgba(99,102,241,0.12)",
+                      border: "1px solid rgba(99,102,241,0.22)",
+                      padding: "3px 8px",
+                      borderRadius: 999,
+                      marginBottom: 10,
+                    }}
+                  >
+                    {item.tag}
+                  </div>
+                  <h3
+                    style={{
+                      fontSize: 16,
+                      fontWeight: 600,
+                      color: "#fafafa",
+                      margin: "0 0 6px",
+                      letterSpacing: "-0.01em",
+                    }}
+                  >
+                    {item.title}
+                  </h3>
+                  <p
+                    style={{
+                      fontSize: 13,
+                      color: "#a1a1aa",
+                      margin: 0,
+                      lineHeight: 1.6,
+                    }}
+                  >
+                    {item.body}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </div>
         )}
       </div>
 

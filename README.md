@@ -2,7 +2,7 @@
 
 Apple Vision Pro-style spatial computing, running entirely in your browser. No headset, no app, no install. Just a camera.
 
-Live: [openvision.vercel.app](https://openvision.vercel.app) *(connect to Vercel)*
+Live: [openvision.vercel.app](https://openvision.vercel.app) _(connect to Vercel)_
 
 ---
 
@@ -34,30 +34,52 @@ Eye tracking powered by [WebGazer.js](https://webgazer.cs.brown.edu/) (Brown Uni
 
 Hand tracking powered by [MediaPipe Hands](https://developers.google.com/mediapipe/solutions/vision/hand_landmarker) (Google): 21 landmarks per hand at 30fps+.
 
-**4 interactive modes:**
+**5 interactive modes:**
 
-| Mode | What it does |
-|---|---|
-| **Particles** | Every fingertip emits glowing particles with gravity. Z-depth controls energy. |
-| **Draw** | Point with index finger to paint smooth bezier curves. Open palm to clear. |
-| **Bubbles** | Iridescent bubbles float up. Pop them with your fingertips. |
-| **Portal** | Hands glow through a pulsing void. Fingertips trail upward particles. |
+| Mode          | What it does                                                                                 |
+| ------------- | -------------------------------------------------------------------------------------------- |
+| **Scroll**    | Pinch and move your hand up or down to scroll a real content feed. Trackpad still works too. |
+| **Particles** | Every fingertip emits glowing particles with gravity. Z-depth controls energy.               |
+| **Draw**      | Point with index finger to paint smooth bezier curves. Open palm to clear.                   |
+| **Bubbles**   | Iridescent bubbles float up. Pop them with your fingertips.                                  |
+| **Portal**    | Hands glow through a pulsing void. Fingertips trail upward particles.                        |
 
 Real-time gesture recognition: Fist, Open, Point, Peace, Thumbs Up, Pinch, and more. Labels appear live on wrists.
 
 ---
 
+## OpenVision as a toolkit
+
+The spatial primitives that power this site are importable. See [`lib/openvision/README.md`](lib/openvision/README.md) for full usage.
+
+```ts
+import {
+  PinchDetector, // core: thumb + index pinch state machine
+  classifyGesture, // core: 9-class gesture classifier
+  useHandTracking, // react: MediaPipe Hands wrapped as a hook
+  useGazeTracking, // react: WebGazer wrapped as a hook
+  usePinchScroll, // react: bind pinch dragging to a scrollable element
+  useDwellClick, // react: stare to click
+  GazeCursor, // react: floating cursor + dwell ring
+  SpatialPanel, // react: draggable glass panel with gaze focus
+} from "@/lib/openvision";
+```
+
+`core/` has zero React and zero deps. `react/` wraps it for Next.js / React 19 apps.
+
+---
+
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Framework | Next.js 16 (App Router) |
-| Language | TypeScript 5 |
-| Eye Tracking | WebGazer.js 2.1.0 (Brown University) |
-| Hand Tracking | MediaPipe Hands v0.4 (Google) |
+| Layer           | Technology                                                            |
+| --------------- | --------------------------------------------------------------------- |
+| Framework       | Next.js 16 (App Router)                                               |
+| Language        | TypeScript 5                                                          |
+| Eye Tracking    | WebGazer.js 2.1.0 (Brown University)                                  |
+| Hand Tracking   | MediaPipe Hands v0.4 (Google)                                         |
 | Pinch Detection | Custom `PinchDetector` class (Verlet-smoothed, hysteresis thresholds) |
-| Styling | Tailwind CSS v4 |
-| Deployment | Vercel |
+| Styling         | Tailwind CSS v4                                                       |
+| Deployment      | Vercel                                                                |
 
 ---
 
@@ -76,6 +98,7 @@ WebGazer.js uses TF.js TFFacemesh for face landmark detection, then trains a rid
 ### PinchDetector (`hooks/usePinch.ts`)
 
 Custom class with:
+
 - Normalized thumb-index distance ratio (relative to palm scale, so it works at any distance from camera)
 - Separate enter/exit thresholds (hysteresis prevents jitter at the boundary)
 - State machine: `idle` → `pinching` → `holding` | `dragging` → `released` → `idle`
