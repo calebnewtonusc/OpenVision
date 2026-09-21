@@ -160,7 +160,7 @@ export default function StrangePortal() {
           vx: (tangentX + spread * -tangentY) * sp,
           vy: (tangentY + spread * tangentX) * sp,
           life: 1,
-          decay: 0.012 + Math.random() * 0.03,
+          decay: 0.009 + Math.random() * 0.024,
           heat: Math.random(),
           width: 0.6 + Math.random() * 1.6,
           bind,
@@ -176,7 +176,7 @@ export default function StrangePortal() {
       // Slight persistence rather than a hard clear: this is the motion blur
       // that turns discrete frames into streaks the eye reads as sparks.
       ctx.globalCompositeOperation = "source-over";
-      ctx.fillStyle = "rgba(4, 3, 2, 0.30)";
+      ctx.fillStyle = "rgba(4, 3, 2, 0.20)";
       ctx.fillRect(0, 0, W, H);
 
       const f = frame.current;
@@ -188,34 +188,39 @@ export default function StrangePortal() {
       // point through mx/my. Drawn as a polyline rather than ctx.arc because
       // the two axes scale differently, so the true shape is an ellipse on
       // screen and ctx.arc cannot express it.
+      // A CIRCLE, with ONE radius. An earlier version scaled x by W and y by
+      // H, reasoning that normalized coords divide by image width and height
+      // separately. That is true of the coordinates and wrong for the
+      // drawing: the fit already collapses the path to a single scalar
+      // radius, so scaling the two axes differently stretches that scalar
+      // into an ellipse. It rendered a badly squashed oval. The centre still
+      // maps through mx/my; only the radius is uniform.
+      const RSCALE = (W + H) / 2;
+      const px = (nx: number) => mx(nx);
+      const py = (ny: number) => my(ny);
       const arcPath = (
         cn: { x: number; y: number },
-        rn: number,
+        r: number,
         a0: number,
         a1: number,
         segs = 96,
+        jitter = 0,
       ) => {
+        const cx0 = px(cn.x);
+        const cy0 = py(cn.y);
         ctx.beginPath();
         for (let i = 0; i <= segs; i++) {
           const a = a0 + ((a1 - a0) * i) / segs;
-          const px = mx(cn.x + Math.cos(a) * rn);
-          const py = my(cn.y + Math.sin(a) * rn);
-          if (i === 0) ctx.moveTo(px, py);
-          else ctx.lineTo(px, py);
+          const rr = jitter ? r * (1 + (Math.random() - 0.5) * jitter) : r;
+          const qx = cx0 + Math.cos(a) * rr;
+          const qy = cy0 + Math.sin(a) * rr;
+          if (i === 0) ctx.moveTo(qx, qy);
+          else ctx.lineTo(qx, qy);
         }
       };
-      // The same ellipse as a fillable path, for the interior and the bloom.
-      const ellipse = (cn: { x: number; y: number }, rn: number, scale = 1) => {
+      const disc = (cn: { x: number; y: number }, r: number) => {
         ctx.beginPath();
-        ctx.ellipse(
-          mx(cn.x),
-          my(cn.y),
-          rn * W * scale,
-          rn * H * scale,
-          0,
-          0,
-          Math.PI * 2,
-        );
+        ctx.arc(px(cn.x), py(cn.y), r, 0, Math.PI * 2);
       };
 
       // THE PINCH IS BOTH THE GATE AND THE PEN. `PinchResult.center` is
@@ -271,17 +276,23 @@ export default function StrangePortal() {
 
       if (S.phase === "igniting" && prevPhase !== "igniting") {
         if (p.center) geom.current = { cx: p.center.x, cy: p.center.y, r: p.radius };
-        attract.current = { ...geom.current };
+        attract.current = { cx: geom.current.cx, cy: geom.current.cy, r: geom.current.r * RSCALE };
         comet.current = [];
-        for (let i = 0; i < 260; i++) {
+        // The flash at the instant it closes, on the same ellipse everything
+        // else is drawn on. It used to use the reducer's pixel radius, which
+        // is a different number from the rendered geometry.
+        const gg = geom.current;
+        for (let i = 0; i < 700; i++) {
           const a = Math.random() * Math.PI * 2;
+          const gr = gg.r * RSCALE;
           spawnAt(
-            S.x + Math.cos(a) * S.r,
-            S.y + Math.sin(a) * S.r,
+            px(gg.cx) + Math.cos(a) * gr,
+            py(gg.cy) + Math.sin(a) * gr,
             -Math.sin(a),
             Math.cos(a),
             1,
-            5.5,
+            7.0,
+            true,
           );
         }
       }
@@ -319,47 +330,70 @@ export default function StrangePortal() {
         const swept = Math.max(-Math.PI * 2, Math.min(Math.PI * 2, p.sweep));
         const a0 = p.startAngle;
         const a1 = a0 + swept;
-        const rpx = (rn * W + rn * H) / 2;
+        const rpx = rn * RSCALE;
 
         ctx.globalCompositeOperation = "lighter";
         ctx.lineCap = "round";
 
-        // The burnt-in arc, dimmer behind, in the same colour and weight as
-        // the finished rim so nothing changes appearance when it closes.
-        ctx.shadowBlur = 26;
+        // Three passes, not one. A single clean stroke reads as geometry;
+        // a wide dim pass under a narrow bright one under a white core reads
+        // as something burning. Same trick as the finished rim.
+        ctx.shadowBlur = 34;
         ctx.shadowColor = `rgba(${SPARK_MID}, 1)`;
+        ctx.strokeStyle = `rgba(${SPARK_COLD}, ${0.22 + p.progress * 0.2})`;
+        ctx.lineWidth = Math.max(3, rpx * 0.075);
+        arcPath(cn, rpx, a0, a1, 96, 0.05);
+        ctx.stroke();
+
+        ctx.strokeStyle = `rgba(${SPARK_MID}, ${0.4 + p.progress * 0.35})`;
+        ctx.lineWidth = Math.max(2, rpx * 0.034);
+        arcPath(cn, rpx, a0, a1, 96, 0.02);
+        ctx.stroke();
+
+        ctx.shadowBlur = 20;
         ctx.strokeStyle = `rgba(${CORE}, ${0.35 + p.progress * 0.45})`;
-        ctx.lineWidth = Math.max(1.6, rpx * 0.028);
-        arcPath(cn, rn, a0, a1);
+        ctx.lineWidth = Math.max(1.2, rpx * 0.013);
+        arcPath(cn, rpx, a0, a1);
         ctx.stroke();
 
         // A hotter, shorter segment at the leading edge, so the eye follows
         // the head rather than the whole arc.
         const headSpan = Math.sign(swept) * Math.min(Math.abs(swept), 0.55);
-        ctx.shadowBlur = 40;
+        ctx.shadowBlur = 60;
         ctx.strokeStyle = `rgba(${CORE}, 0.95)`;
-        ctx.lineWidth = Math.max(2.2, rpx * 0.04);
-        arcPath(cn, rn, a1 - headSpan, a1, 24);
+        ctx.lineWidth = Math.max(2.6, rpx * 0.05);
+        arcPath(cn, rpx, a1 - headSpan, a1, 24);
         ctx.stroke();
         ctx.shadowBlur = 0;
 
         // Sparks thrown off the head, tangentially. The tangent in SCREEN
         // space is (sin a * W, cos a * H), because mx flips x and the two
         // axes scale differently.
-        const hx = mx(cn.x + Math.cos(a1) * rn);
-        const hy = my(cn.y + Math.sin(a1) * rn);
+        const hx = px(cn.x) + Math.cos(a1) * rpx;
+        const hy = py(cn.y) + Math.sin(a1) * rpx;
         const dir = Math.sign(swept) || 1;
-        let tx = Math.sin(a1) * W * dir;
-        let ty = Math.cos(a1) * H * dir;
+        let tx = -Math.sin(a1) * dir;
+        let ty = Math.cos(a1) * dir;
         const tm = Math.hypot(tx, ty) || 1;
         tx /= tm;
         ty /= tm;
-        spawnAt(hx, hy, tx, ty, 14, 3.2, true);
-        attract.current = { cx: cn.x, cy: cn.y, r: rn };
+        // Density is most of the look. Scaled by hand speed so a confident
+        // sweep throws a sheet of fire and a timid one does not.
+        const headPrev = comet.current[comet.current.length - 1];
+        const speedPx = headPrev ? Math.hypot(hx - headPrev.x, hy - headPrev.y) : 0;
+        comet.current.push({ x: hx, y: hy });
+        if (comet.current.length > 40) comet.current.shift();
+        spawnAt(hx, hy, tx, ty, Math.min(46, 16 + Math.floor(speedPx * 1.4)), 4.2, true);
+        // A few unbound ones that just fly off and die, so the rim is not the
+        // only thing on screen.
+        spawnAt(hx, hy, tx, ty, 6, 5.5, false);
+        attract.current = { cx: cn.x, cy: cn.y, r: rpx };
       }
       if (S.phase === "idle" || S.phase === "open" || S.phase === "closing") {
         attract.current =
-          S.phase === "open" ? { cx: geom.current.cx, cy: geom.current.cy, r: geom.current.r } : null;
+          S.phase === "open"
+            ? { cx: geom.current.cx, cy: geom.current.cy, r: geom.current.r * RSCALE }
+            : null;
       }
 
       // ── The portal ────────────────────────────────────────────────────────
@@ -375,81 +409,105 @@ export default function StrangePortal() {
         const g = geom.current;
         const rn = g.r * (1 - ease(shut));
         const cn = { x: g.cx, y: g.cy };
-        const rpx = (rn * W + rn * H) / 2;
+        const rpx = rn * RSCALE;
         const vis = e * (1 - shut);
         const age = (now - S.born) / 1000;
 
         if (rpx >= 2) {
-          // Dark amber interior. Rule 4: a disc, not a hole. It fades in
-          // across the ignition, which IS the hole opening. The rim is
-          // already there from the draw, so this is the only thing arriving.
+          const cx0 = px(cn.x);
+          const cy0 = py(cn.y);
+
+          // THE INTERIOR IS DARK. The reference frames show near black at the
+          // centre with warmth only in the last few percent before the rim.
+          // A previous version ran the warm stop from 72% outward and laid a
+          // 1.7x bloom over it at 0.3 alpha, which painted a flat orange wash
+          // across the whole portal and well past it. That single halo was
+          // most of why it stopped looking like fire and started looking like
+          // a glowing plate.
           ctx.globalCompositeOperation = "source-over";
           ctx.globalAlpha = vis;
-          const inner = ctx.createRadialGradient(
-            mx(cn.x), my(cn.y), 0,
-            mx(cn.x), my(cn.y), Math.max(rn * W, rn * H),
-          );
-          inner.addColorStop(0, "rgba(8, 5, 3, 1)");
-          inner.addColorStop(0.72, "rgba(26, 12, 5, 1)");
-          inner.addColorStop(0.94, "rgba(92, 40, 12, 0.95)");
-          inner.addColorStop(1, `rgba(${SPARK_COLD}, 0.65)`);
+          const inner = ctx.createRadialGradient(cx0, cy0, 0, cx0, cy0, rpx);
+          inner.addColorStop(0, "rgba(3, 2, 1, 1)");
+          inner.addColorStop(0.82, "rgba(10, 5, 2, 1)");
+          inner.addColorStop(0.95, "rgba(46, 18, 5, 1)");
+          inner.addColorStop(1, "rgba(120, 48, 12, 0.85)");
           ctx.fillStyle = inner;
-          ellipse(cn, rn);
+          disc(cn, rpx);
           ctx.fill();
           ctx.globalAlpha = 1;
 
           ctx.globalCompositeOperation = "lighter";
 
+          // A tight halo hugging the rim, not a wash over the whole disc.
           const bloom = ctx.createRadialGradient(
-            mx(cn.x), my(cn.y), Math.min(rn * W, rn * H) * 0.85,
-            mx(cn.x), my(cn.y), Math.max(rn * W, rn * H) * 1.7,
+            cx0, cy0, rpx * 0.9,
+            cx0, cy0, rpx * 1.22,
           );
-          bloom.addColorStop(0, `rgba(${SPARK_MID}, ${0.3 * vis})`);
+          bloom.addColorStop(0, `rgba(${SPARK_MID}, ${0.16 * vis})`);
           bloom.addColorStop(1, "rgba(0,0,0,0)");
           ctx.fillStyle = bloom;
-          ellipse(cn, rn, 1.7);
+          disc(cn, rpx * 1.22);
           ctx.fill();
 
-          // The shockwave, during ignition only: a bright ring expanding past
-          // the rim and dying. It carries the eye outward at the instant the
-          // circle closes instead of the rim simply appearing.
+          // The shockwave, during ignition only.
           if (ignite < 1) {
-            ctx.strokeStyle = `rgba(${CORE}, ${(1 - e) * 0.55})`;
+            ctx.strokeStyle = `rgba(${CORE}, ${(1 - e) * 0.5})`;
             ctx.lineWidth = (1 - e) * 9 + 1;
-            arcPath(cn, rn * (1 + e * 0.85), 0, Math.PI * 2);
+            arcPath(cn, rpx * (1 + e * 0.85), 0, Math.PI * 2);
             ctx.stroke();
           }
 
-          // The rim. Same colour and weight as the arc that built it.
+          // THE RIM IS A BAND OF FIRE, NOT A HAIRLINE. Four passes: a wide
+          // dim ember band, a mid orange band, a narrow bright one, then a
+          // white core. Each is jittered in radius so the edge is ragged.
+          // One clean stroke, which is what it was, reads as neon.
           const flicker = 0.82 + Math.sin(now / 55) * 0.1 + Math.random() * 0.08;
           const heat = 1 + (1 - e) * 1.6 + ease(shut) * 2.6;
-          ctx.shadowBlur = 42 * heat;
-          ctx.shadowColor = `rgba(${SPARK_MID}, 1)`;
-          ctx.strokeStyle = `rgba(${CORE}, ${Math.min(1, flicker * (0.55 + vis * 0.45))})`;
-          ctx.lineWidth = Math.max(1.6, rpx * 0.028) * heat;
           ctx.lineCap = "round";
-          arcPath(cn, rn, 0, Math.PI * 2);
+          ctx.shadowColor = `rgba(${SPARK_MID}, 1)`;
+
+          ctx.shadowBlur = 30 * heat;
+          ctx.strokeStyle = `rgba(${SPARK_COLD}, ${0.3 * vis})`;
+          ctx.lineWidth = Math.max(4, rpx * 0.1) * heat;
+          arcPath(cn, rpx, 0, Math.PI * 2, 120, 0.06);
+          ctx.stroke();
+
+          ctx.shadowBlur = 24 * heat;
+          ctx.strokeStyle = `rgba(${SPARK_MID}, ${0.5 * vis})`;
+          ctx.lineWidth = Math.max(2.5, rpx * 0.045) * heat;
+          arcPath(cn, rpx, 0, Math.PI * 2, 120, 0.03);
+          ctx.stroke();
+
+          ctx.shadowBlur = 18 * heat;
+          ctx.strokeStyle = `rgba(${SPARK_HOT}, ${0.7 * vis})`;
+          ctx.lineWidth = Math.max(1.6, rpx * 0.018) * heat;
+          arcPath(cn, rpx, 0, Math.PI * 2, 120, 0.012);
+          ctx.stroke();
+
+          ctx.shadowBlur = 10;
+          ctx.strokeStyle = `rgba(${CORE}, ${Math.min(1, flicker * vis * 0.8)})`;
+          ctx.lineWidth = Math.max(1, rpx * 0.007);
+          arcPath(cn, rpx, 0, Math.PI * 2, 120);
           ctx.stroke();
           ctx.shadowBlur = 0;
+
 
           // Sparks off the rim. Heaviest during ignition. During the collapse
           // they are thrown inward, so it looks sucked shut rather than
           // simply scaled down.
           const emit =
-            S.phase === "igniting" ? 30 : S.phase === "closing" ? 22 : age < 0.6 ? 16 : 7;
+            S.phase === "igniting" ? 90 : S.phase === "closing" ? 55 : age < 0.6 ? 46 : 26;
           const inward = S.phase === "closing" ? -1 : 1;
           for (let i = 0; i < emit; i++) {
             const a = Math.random() * Math.PI * 2 + spin.current;
-            let tx = Math.sin(a) * W * inward;
-            let ty = Math.cos(a) * H * inward;
-            const tm = Math.hypot(tx, ty) || 1;
             spawnAt(
-              mx(cn.x + Math.cos(a) * rn),
-              my(cn.y + Math.sin(a) * rn),
-              tx / tm,
-              ty / tm,
+              cx0 + Math.cos(a) * rpx,
+              cy0 + Math.sin(a) * rpx,
+              -Math.sin(a) * inward,
+              Math.cos(a) * inward,
               1,
-              S.phase === "igniting" ? 5.0 : 3.4,
+              S.phase === "igniting" ? 6.5 : 4.2,
+              true,
             );
           }
         }
@@ -479,20 +537,36 @@ export default function StrangePortal() {
         if (sp.bind && at) {
           const Cx = mx(at.cx);
           const Cy = my(at.cy);
-          const Rx = at.r * W;
-          const Ry = at.r * H;
-          const ux = (sp.x - Cx) / (Rx || 1);
-          const uy = (sp.y - Cy) / (Ry || 1);
-          const ul = Math.hypot(ux, uy) || 1;
-          const tx2 = Cx + (ux / ul) * Rx;
-          const ty2 = Cy + (uy / ul) * Ry;
-          const pull = 0.055 * (1 - sp.life) + 0.012;
-          sp.vx += (tx2 - sp.x) * pull;
-          sp.vy += (ty2 - sp.y) * pull;
-          // Extra damping so they settle onto the rim instead of orbiting it
-          // forever, which looks like a bug rather than an effect.
-          sp.vx *= 0.94;
-          sp.vy *= 0.94;
+          const R = at.r || 1;
+          const dx2 = sp.x - Cx;
+          const dy2 = sp.y - Cy;
+          const dl = Math.hypot(dx2, dy2) || 1;
+          const nx2 = dx2 / dl;
+          const ny2 = dy2 / dl;
+
+          // A CORONA, NOT A COLLAR. Two earlier versions were both wrong in
+          // the same direction: the first sprang the sparks onto the rim and
+          // damped them to a stop, the second orbited them but held them at
+          // the radius. Both pinned every spark to one circle, and the
+          // reference has a dense field of streaks reaching well outside the
+          // ring. Streak length is drawn from speed, so anything that slows
+          // a spark also shortens it into a stub.
+          //
+          // So: push out hard while inside the rim, let them fly once past
+          // it, and spin them the whole time. Inside plus tangential is the
+          // catherine wheel; outside plus no brake is the corona.
+          if (dl < R) {
+            sp.vx += nx2 * (R - dl) * 0.06;
+            sp.vy += ny2 * (R - dl) * 0.06;
+          } else {
+            sp.vx += nx2 * 0.22 * sp.life;
+            sp.vy += ny2 * 0.22 * sp.life;
+          }
+          const tang = 1.9 * sp.life;
+          sp.vx += -ny2 * tang;
+          sp.vy += nx2 * tang;
+          sp.vx *= 0.992;
+          sp.vy *= 0.992;
         }
 
         sp.x += sp.vx;
@@ -503,7 +577,7 @@ export default function StrangePortal() {
 
         // Drawn as a LINE along velocity, length scaled by speed. Rule 1.
         const speed = Math.hypot(sp.vx, sp.vy) || 1;
-        const len = Math.min(26, 2 + speed * 3.1);
+        const len = Math.min(44, 2 + speed * 3.6);
         const h = sp.heat * sp.life;
         const col = h > 0.62 ? CORE : h > 0.3 ? SPARK_HOT : h > 0.14 ? SPARK_MID : SPARK_COLD;
 
@@ -515,7 +589,7 @@ export default function StrangePortal() {
         ctx.lineTo(sp.x - (sp.vx / speed) * len, sp.y - (sp.vy / speed) * len);
         ctx.stroke();
       }
-      sparks.current = alive.length > 4200 ? alive.slice(-4200) : alive;
+      sparks.current = alive.length > 11000 ? alive.slice(-11000) : alive;
 
       setHud((h) =>
         h.progress === p.progress && h.phase === S.phase
