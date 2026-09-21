@@ -47,9 +47,13 @@ import type { Landmark } from "./types";
 
 export interface CircleGestureOptions {
   /**
-   * Radians of accumulated turning before the gesture fires. Default 5.35,
-   * about 306 degrees: a circle you can close casually rather than one you
-   * have to land precisely, since the hand nearly always stops short.
+   * Radians of accumulated turning before the gesture fires. Default 4.6,
+   * about 264 degrees, so three quarters of a turn is enough.
+   *
+   * It was 306 degrees and he could not close one: "Still really hard to
+   * draw circles." An arm sweeping in the air runs out of comfortable range
+   * before it comes all the way round, and the last quarter turn is the
+   * part where the wrist is fighting itself.
    */
   sweepThreshold?: number;
   /** Trail length in samples. Default 240, enough to hold a whole slow
@@ -125,10 +129,10 @@ export class CircleGestureDetector {
 
   constructor(options: CircleGestureOptions = {}) {
     this.o = {
-      sweepThreshold: options.sweepThreshold ?? 5.35,
+      sweepThreshold: options.sweepThreshold ?? 4.6,
       trailLength: options.trailLength ?? 240,
-      minSegment: options.minSegment ?? 0.006,
-      maxTurn: options.maxTurn ?? Math.PI / 3,
+      minSegment: options.minSegment ?? 0.004,
+      maxTurn: options.maxTurn ?? Math.PI / 2.2,
       staleMs: options.staleMs ?? 400,
       smoothing: options.smoothing ?? 0.45,
     };
