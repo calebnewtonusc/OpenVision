@@ -52,7 +52,8 @@ export interface CircleGestureOptions {
    * have to land precisely, since the hand nearly always stops short.
    */
   sweepThreshold?: number;
-  /** Trail length in samples. Default 48. Only affects centre and radius. */
+  /** Trail length in samples. Default 240, enough to hold a whole slow
+   * circle, since the fit is only as good as the arc it sees. */
   trailLength?: number;
   /**
    * Shortest segment, in normalized units, that carries a usable direction.
@@ -114,7 +115,7 @@ export class CircleGestureDetector {
   constructor(options: CircleGestureOptions = {}) {
     this.o = {
       sweepThreshold: options.sweepThreshold ?? 5.35,
-      trailLength: options.trailLength ?? 48,
+      trailLength: options.trailLength ?? 240,
       minSegment: options.minSegment ?? 0.006,
       maxTurn: options.maxTurn ?? Math.PI / 3,
       staleMs: options.staleMs ?? 400,
@@ -212,9 +213,7 @@ export class CircleGestureDetector {
     if (this.trail.length < 3) {
       return { ...EMPTY, completed: false };
     }
-    const center = this.centroid();
-    const radii = this.trail.map((q) => Math.hypot(q.x - center.x, q.y - center.y));
-    const radius = radii.reduce((a, b) => a + b, 0) / radii.length;
+    const { center, radius } = this.fit();
     return {
       progress: Math.min(1, Math.abs(this.sweep) / this.o.sweepThreshold),
       sweep: this.sweep,
@@ -231,6 +230,65 @@ export class CircleGestureDetector {
     this.smooth = null;
     this.sweep = 0;
     this.lastT = 0;
+  }
+
+  /**
+   * Algebraic least-squares circle fit (Kasa). Returns the centre of the
+   * circle the path lies on, which is NOT the centroid of the path.
+   *
+   * WHY NOT THE CENTROID. The centroid of an arc sits inside the arc, pulled
+   * toward wherever the samples are densest, and only coincides with the
+   * centre when the loop is complete and evenly sampled. A hand always stops
+   * a little short and always slows on one side, so the portal landed
+   * consistently off from the circle the person actually drew.
+   *
+   * Fits x^2 + y^2 = a*x + b*y + c, which is linear in (a, b, c), so it is a
+   * 3x3 solve with no iteration. Centre is (a/2, b/2). Coordinates are
+   * shifted to the centroid first, because the raw normalized values are all
+   * near 0.5 and squaring them costs precision in the normal equations.
+   *
+   * Falls back to the centroid when the points are nearly collinear, where
+   * the fit is singular and would throw the portal off screen.
+   */
+  private fit(): { center: { x: number; y: number }; radius: number } {
+    const m = this.centroid();
+    const n = this.trail.length;
+    let Sxx = 0, Sxy = 0, Syy = 0, Sxz = 0, Syz = 0, Sz = 0, Sx = 0, Sy = 0;
+    for (const q of this.trail) {
+      const x = q.x - m.x;
+      const y = q.y - m.y;
+      const z = x * x + y * y;
+      Sxx += x * x;
+      Sxy += x * y;
+      Syy += y * y;
+      Sxz += x * z;
+      Syz += y * z;
+      Sz += z;
+      Sx += x;
+      Sy += y;
+    }
+    // Shifted to the centroid, so Sx and Sy are ~0 and the system reduces to
+    // a 2x2 in (a, b).
+    const det = Sxx * Syy - Sxy * Sxy;
+    const meanR = Math.sqrt(Sz / n);
+    if (!isFinite(det) || Math.abs(det) < 1e-12) {
+      return { center: m, radius: meanR };
+    }
+    const a = (Sxz * Syy - Syz * Sxy) / det;
+    const b = (Syz * Sxx - Sxz * Sxy) / det;
+    const cx = a / 2;
+    const cy = b / 2;
+    const c = Sz / n - (cx * Sx * 2 + cy * Sy * 2) / n;
+    const r2 = cx * cx + cy * cy + c;
+    const radius = r2 > 0 ? Math.sqrt(r2) : meanR;
+    const center = { x: m.x + cx, y: m.y + cy };
+    // A fit can run away on a short or noisy arc. Anything wildly outside
+    // what the samples support is worse than the centroid.
+    const drift = Math.hypot(cx, cy);
+    if (!isFinite(radius) || radius > meanR * 4 || drift > meanR * 4) {
+      return { center: m, radius: meanR };
+    }
+    return { center, radius };
   }
 
   private centroid() {
