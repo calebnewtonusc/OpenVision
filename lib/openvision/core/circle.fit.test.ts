@@ -96,3 +96,40 @@ describe("circle fit", () => {
     expect(last!.center!.y).toBeLessThan(1.5);
   });
 });
+
+describe("ill-conditioned input", () => {
+  // Caleb, 2026-09-21: "I barely pinched my fingers and its already throwing
+  // sparks across the universe lol". A short, barely curved path fits a vast
+  // circle, and the renderer drew it.
+  it("does not report a giant circle for a small flick", () => {
+    const d = new CircleGestureDetector();
+    let last;
+    for (let i = 0; i < 12; i++) {
+      // 18 degrees of a huge circle: nearly a straight line.
+      const a = (Math.PI * 0.1 * i) / 12;
+      last = d.push(
+        0.5 + Math.cos(a) * 0.9,
+        0.5 + Math.sin(a) * 0.9 + (Math.random() - 0.5) * 0.004,
+        1000 + i * 33,
+      );
+    }
+    expect(last!.radius).toBeLessThanOrEqual(0.75);
+  });
+
+  it("never reports a radius beyond the frame, whatever the path", () => {
+    for (let trial = 0; trial < 40; trial++) {
+      const d = new CircleGestureDetector();
+      let last;
+      for (let i = 0; i < 25; i++) {
+        last = d.push(Math.random(), Math.random(), 1000 + i * 33);
+      }
+      if (last?.radius !== undefined) expect(last.radius).toBeLessThanOrEqual(0.75);
+    }
+  });
+
+  it("still fits a real circle accurately after the guard", () => {
+    const res = sweep(new CircleGestureDetector(), { cx: 0.4, cy: 0.6, r: 0.13 });
+    expect(Math.hypot(res.center!.x - 0.4, res.center!.y - 0.6)).toBeLessThan(0.02);
+    expect(res.radius).toBeCloseTo(0.13, 1);
+  });
+});

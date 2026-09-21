@@ -200,6 +200,14 @@ export default function StrangePortal() {
       // into an ellipse. It rendered a badly squashed oval. The centre still
       // maps through mx/my; only the radius is uniform.
       const RSCALE = (W + H) / 2;
+      // A PORTAL IS NEVER BIGGER THAN THE SCREEN. The circle fit is
+      // ill-conditioned on a short, barely curved path: a small flick of the
+      // hand fits a vast circle whose arc happens to pass through those few
+      // points. Mathematically correct, visually absurd, and it threw an arc
+      // right off the display on a barely-there pinch.
+      const RMIN = 40;
+      const RMAX = Math.min(W, H) * 0.42;
+      const clampR = (r: number) => Math.max(RMIN, Math.min(RMAX, r));
       const px = (nx: number) => mx(nx);
       const py = (ny: number) => my(ny);
       const arcPath = (
@@ -208,14 +216,18 @@ export default function StrangePortal() {
         a0: number,
         a1: number,
         segs = 96,
-        jitter = 0,
+        jitterPx = 0,
       ) => {
+        // JITTER IS IN PIXELS. It used to be a fraction of the radius, which
+        // is fine at 120px and splits the band into separate parallel
+        // ribbons at 900px. A ragged edge is a fixed number of pixels of
+        // raggedness whatever the ring's size.
         const cx0 = px(cn.x);
         const cy0 = py(cn.y);
         ctx.beginPath();
         for (let i = 0; i <= segs; i++) {
           const a = a0 + ((a1 - a0) * i) / segs;
-          const rr = jitter ? r * (1 + (Math.random() - 0.5) * jitter) : r;
+          const rr = jitterPx ? r + (Math.random() - 0.5) * jitterPx : r;
           const qx = cx0 + Math.cos(a) * rr;
           const qy = cy0 + Math.sin(a) * rr;
           if (i === 0) ctx.moveTo(qx, qy);
@@ -328,7 +340,11 @@ export default function StrangePortal() {
       // moment the circle closes. The fitted circle is what makes this
       // possible, because the rim is drawn on the circle the hand is
       // describing rather than on the exact path it wandered.
-      if (S.phase === "drawing" && p.center && p.startAngle !== null && p.progress > 0.07) {
+      // Nothing is drawn below this much of a turn. The fit needs real curvature
+      // before it says anything true, and a stray twitch of a pinched hand
+      // should produce nothing at all rather than a wrong guess rendered
+      // confidently.
+      if (S.phase === "drawing" && p.center && p.startAngle !== null && p.progress > 0.16) {
         const cn = p.center;
         const rn = p.radius;
         // NORMALIZED ANGLES DO NOT SURVIVE THE MIRROR. The detector measures
@@ -341,7 +357,7 @@ export default function StrangePortal() {
         const swept = -Math.max(-Math.PI * 2, Math.min(Math.PI * 2, p.sweep));
         const a0 = mirrorAngle(p.startAngle);
         const a1 = a0 + swept;
-        const rpx = rn * RSCALE;
+        const rpx = clampR(rn * RSCALE);
 
         // INTENSITY RAMPS WITH THE ARC. The first version opened at nearly
         // full strength and added a little on top, so drawing felt the same
@@ -362,12 +378,12 @@ export default function StrangePortal() {
         ctx.shadowColor = `rgba(${SPARK_MID}, 1)`;
         ctx.strokeStyle = `rgba(${SPARK_COLD}, ${0.04 + k * 0.34})`;
         ctx.lineWidth = Math.max(1.5, rpx * (0.02 + k * 0.06));
-        arcPath(cn, rpx, a0, a1, 96, 0.05);
+        arcPath(cn, rpx, a0, a1, 96, 3);
         ctx.stroke();
 
         ctx.strokeStyle = `rgba(${SPARK_MID}, ${0.07 + k * 0.6})`;
         ctx.lineWidth = Math.max(1.2, rpx * (0.01 + k * 0.03));
-        arcPath(cn, rpx, a0, a1, 96, 0.02);
+        arcPath(cn, rpx, a0, a1, 96, 1.5);
         ctx.stroke();
 
         ctx.shadowBlur = 6 + 16 * k;
@@ -432,7 +448,7 @@ export default function StrangePortal() {
         const g = geom.current;
         const rn = g.r * (1 - ease(shut));
         const cn = { x: g.cx, y: g.cy };
-        const rpx = rn * RSCALE;
+        const rpx = clampR(g.r * RSCALE) * (1 - ease(shut));
         const vis = e * (1 - shut);
         const age = (now - S.born) / 1000;
 
@@ -492,19 +508,19 @@ export default function StrangePortal() {
           ctx.shadowBlur = 30 * heat;
           ctx.strokeStyle = `rgba(${SPARK_COLD}, ${0.3 * vis})`;
           ctx.lineWidth = Math.max(4, rpx * 0.1) * heat;
-          arcPath(cn, rpx, 0, Math.PI * 2, 120, 0.06);
+          arcPath(cn, rpx, 0, Math.PI * 2, 120, 4);
           ctx.stroke();
 
           ctx.shadowBlur = 24 * heat;
           ctx.strokeStyle = `rgba(${SPARK_MID}, ${0.5 * vis})`;
           ctx.lineWidth = Math.max(2.5, rpx * 0.045) * heat;
-          arcPath(cn, rpx, 0, Math.PI * 2, 120, 0.03);
+          arcPath(cn, rpx, 0, Math.PI * 2, 120, 2.5);
           ctx.stroke();
 
           ctx.shadowBlur = 18 * heat;
           ctx.strokeStyle = `rgba(${SPARK_HOT}, ${0.7 * vis})`;
           ctx.lineWidth = Math.max(1.6, rpx * 0.018) * heat;
-          arcPath(cn, rpx, 0, Math.PI * 2, 120, 0.012);
+          arcPath(cn, rpx, 0, Math.PI * 2, 120, 1.2);
           ctx.stroke();
 
           ctx.shadowBlur = 10;

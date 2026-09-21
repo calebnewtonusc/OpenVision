@@ -300,8 +300,23 @@ export class CircleGestureDetector {
     // A fit can run away on a short or noisy arc. Anything wildly outside
     // what the samples support is worse than the centroid.
     const drift = Math.hypot(cx, cy);
-    if (!isFinite(radius) || radius > meanR * 4 || drift > meanR * 4) {
-      return { center: m, radius: meanR };
+    // AN ILL-CONDITIONED FIT IS WORSE THAN NO FIT. On a short, barely curved
+    // path the least-squares solution is a vast circle whose arc happens to
+    // pass through those few points: correct, and useless. It put an arc
+    // right off the screen on a small flick of a pinched hand.
+    //
+    // Two ceilings. The first is relative, because a fitted radius far
+    // larger than the spread of the samples means the curvature was too
+    // slight to trust. The second is absolute, because the coordinate space
+    // is the camera frame and nothing sensible is drawn on a circle wider
+    // than it.
+    if (
+      !isFinite(radius) ||
+      radius > meanR * 2.5 ||
+      drift > meanR * 2.5 ||
+      radius > 0.75
+    ) {
+      return { center: m, radius: Math.min(meanR, 0.75) };
     }
     return { center, radius };
   }
