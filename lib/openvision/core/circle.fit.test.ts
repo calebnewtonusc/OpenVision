@@ -8,7 +8,15 @@ import { CircleGestureDetector } from "./circle";
  */
 function sweep(
   d: CircleGestureDetector,
-  { cx, cy, r, arc = Math.PI * 2, steps = 70, noise = 0.005, from = 0 },
+  {
+    cx,
+    cy,
+    r,
+    arc = Math.PI * 2,
+    steps = 70,
+    noise = 0.005,
+    from = 0,
+  }: { cx: number; cy: number; r: number; arc?: number; steps?: number; noise?: number; from?: number },
 ) {
   let last;
   for (let i = 0; i <= steps; i++) {

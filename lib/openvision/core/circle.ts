@@ -88,6 +88,15 @@ export interface CircleProgress {
   completed: boolean;
   /** Direction, once there is enough sweep to tell. */
   direction: "cw" | "ccw" | null;
+  /**
+   * Angle of the FIRST sampled point about the fitted centre, radians.
+   * With `endAngle` this is the arc the hand has actually swept, on the
+   * circle it is drawing, which is what lets a caller draw the ring building
+   * along its own circumference instead of a free path through the air.
+   */
+  startAngle: number | null;
+  /** Angle of the most recent point about the fitted centre, radians. */
+  endAngle: number | null;
 }
 
 const EMPTY: CircleProgress = {
@@ -97,6 +106,8 @@ const EMPTY: CircleProgress = {
   radius: 0,
   completed: false,
   direction: null,
+  startAngle: null,
+  endAngle: null,
 };
 
 interface Sample {
@@ -214,7 +225,11 @@ export class CircleGestureDetector {
       return { ...EMPTY, completed: false };
     }
     const { center, radius } = this.fit();
+    const first = this.trail[0];
+    const last = this.trail[this.trail.length - 1];
     return {
+      startAngle: Math.atan2(first.y - center.y, first.x - center.x),
+      endAngle: Math.atan2(last.y - center.y, last.x - center.x),
       progress: Math.min(1, Math.abs(this.sweep) / this.o.sweepThreshold),
       sweep: this.sweep,
       center,
