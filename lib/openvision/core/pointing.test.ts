@@ -147,10 +147,15 @@ describe("parallax", () => {
   // did not. A camera-relative mapping cannot do this, and these were
   // briefly deleted by a bad edit, which is how a feature keeps its tests
   // and loses its meaning.
+  // The default is 0, so these ask for the correction explicitly. They test
+  // that the mechanism works, not that it is switched on.
+  const FULL = { strength: 1 };
   it("moving the eye LEFT moves the point RIGHT", () => {
     const h = handAt(0, -80, HAND_Z);
-    const centred = pointingPoint({ ...eyesAt(0, 0, EYE_Z), hand: h })!;
-    const leaned = pointingPoint({ ...eyesAt(-90, 0, EYE_Z), hand: h })!;
+    const centred = pointingPoint({ ...eyesAt(0, 0, EYE_Z), hand: h },
+      MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO, undefined, FULL)!;
+    const leaned = pointingPoint({ ...eyesAt(-90, 0, EYE_Z), hand: h },
+      MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO, undefined, FULL)!;
     expect(leaned.x).toBeGreaterThan(centred.x);
   });
 
@@ -163,8 +168,10 @@ describe("parallax", () => {
 
   it("differs from the camera-relative answer once the head moves", () => {
     const h = handAt(0, -80, HAND_Z);
-    const a = pointingPoint({ ...eyesAt(0, 0, EYE_Z), hand: h })!;
-    const b = pointingPoint({ ...eyesAt(-120, 0, EYE_Z), hand: h })!;
+    const a = pointingPoint({ ...eyesAt(0, 0, EYE_Z), hand: h },
+      MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO, undefined, FULL)!;
+    const b = pointingPoint({ ...eyesAt(-120, 0, EYE_Z), hand: h },
+      MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO, undefined, FULL)!;
     expect(Math.abs(b.x - a.x)).toBeGreaterThan(20);
   });
 
@@ -280,8 +287,10 @@ describe("the ray must never fly off screen", () => {
   it("still corrects for parallax when the hand is genuinely out front", () => {
     // The guard must not disable the feature it protects.
     const h = handAt(0, -80, 350);
-    const centred = pointingPoint({ ...eyesAt(0, 0, EYE_Z), hand: h })!;
-    const leaned = pointingPoint({ ...eyesAt(-90, 0, EYE_Z), hand: h })!;
+    const centred = pointingPoint({ ...eyesAt(0, 0, EYE_Z), hand: h },
+      MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO, undefined, { strength: 1 })!;
+    const leaned = pointingPoint({ ...eyesAt(-90, 0, EYE_Z), hand: h },
+      MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO, undefined, { strength: 1 })!;
     expect(leaned.x).toBeGreaterThan(centred.x);
   });
 });
