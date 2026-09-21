@@ -170,6 +170,62 @@ describe("parallax", () => {
   });
 });
 
+describe("the ray must never fly off screen", () => {
+  // Caleb, 2026-09-21: "The portal keeps randomly starting on random parts
+  // of the screen that totally have nothing to do with where my pinch is."
+  //
+  // t = eyeZ / (eyeZ - fingerZ). As the hand nears the plane of the face
+  // that denominator vanishes and t explodes, so a 10mm fingertip movement
+  // became 600mm on screen. Both depths are estimated from apparent size
+  // and both are noisy, so the hand's estimate wanders into that zone by
+  // itself. Guarding against zero was not enough: the numbers were finite
+  // and absurd.
+  const EYE_Z = 600;
+
+  it("does not explode when the hand is near the face plane", () => {
+    for (const handZ of [599, 595, 590, 580, 560, 520]) {
+      const r = pointingPoint({
+        ...eyesAt(0, 0, EYE_Z), hand: handAt(40, -80, handZ),
+      })!;
+      expect(r, `handZ=${handZ}`).not.toBeNull();
+      // Generously off screen is still a bug: the screen is 1512 wide.
+      expect(Math.abs(r.x), `handZ=${handZ} x=${r.x}`).toBeLessThan(6000);
+      expect(Math.abs(r.y), `handZ=${handZ} y=${r.y}`).toBeLessThan(6000);
+    }
+  });
+
+  it("stays put as the hand depth wobbles, which it always does", () => {
+    // A hand held still, with the depth estimate drifting by noise. The
+    // point must not swing across the display.
+    const xs: number[] = [];
+    for (const handZ of [340, 350, 360, 370, 355, 345]) {
+      xs.push(pointingPoint({ ...eyesAt(0, 0, EYE_Z), hand: handAt(0, -80, handZ) })!.x);
+    }
+    const spread = Math.max(...xs) - Math.min(...xs);
+    expect(spread, `x swung ${spread.toFixed(0)}px on depth noise alone`)
+      .toBeLessThan(400);
+  });
+
+  it("falls back rather than extrapolating past the gain limit", () => {
+    // Hand 10mm in front of the face: the old code multiplied every offset
+    // by 60.
+    const close = pointingPoint({ ...eyesAt(0, 0, EYE_Z), hand: handAt(40, -80, 590) })!;
+    const camera = pointingPoint({ ...eyesAt(0, 0, EYE_Z), hand: handAt(40, -80, 340) })!;
+    // The fallback is the camera-relative point, which is wrong by a known
+    // parallax rather than an unknown multiple, so it stays in the frame.
+    expect(Math.abs(close.x)).toBeLessThan(3000);
+    expect(Number.isFinite(camera.x)).toBe(true);
+  });
+
+  it("still corrects for parallax when the hand is genuinely out front", () => {
+    // The guard must not disable the feature it protects.
+    const h = handAt(0, -80, 350);
+    const centred = pointingPoint({ ...eyesAt(0, 0, EYE_Z), hand: h })!;
+    const leaned = pointingPoint({ ...eyesAt(-90, 0, EYE_Z), hand: h })!;
+    expect(leaned.x).toBeGreaterThan(centred.x);
+  });
+});
+
 describe("refusing to guess", () => {
   it("returns null for a short landmark array", () => {
     expect(pointingPoint({
