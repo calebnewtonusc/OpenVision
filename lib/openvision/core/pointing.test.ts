@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   pointingPoint, cameraSpace, depthFromApparentSize, focalNormalized,
   rayToScreen, mmToPixels, MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO,
+  DepthTracker, ROUGH_EYE_MM, ROUGH_HAND_MM, DEPTH_ADAPT,
+  EYE_RANGE_MM, HAND_RANGE_MM,
   type Vec3,
 } from "./pointing";
 import type { Landmark } from "./types";
@@ -25,22 +27,26 @@ function project(xMm: number, yMm: number, zMm: number) {
 }
 
 /** A hand at a real position, with a real palm, seen by the camera. */
-function handAt(xMm: number, yMm: number, zMm: number): Landmark[] {
+function handAt(xMm: number, yMm: number, zMm: number, noise = 0): Landmark[] {
+  const j = () => (Math.random() - 0.5) * noise;
   const lm: Landmark[] = Array.from({ length: 21 }, () => ({ x: 0.5, y: 0.5, z: 0 }));
   const mcp = project(xMm, yMm, zMm);
   const wrist = project(xMm, yMm - DEFAULT_ANTHRO.palmMm, zMm);
-  lm[9] = { x: mcp.x, y: mcp.y, z: 0 };
-  lm[0] = { x: wrist.x, y: wrist.y, z: 0 };
-  lm[8] = { x: mcp.x, y: mcp.y, z: 0 };
+  lm[9] = { x: mcp.x + j(), y: mcp.y + j(), z: 0 };
+  lm[0] = { x: wrist.x + j(), y: wrist.y + j(), z: 0 };
+  lm[8] = { x: mcp.x + j(), y: mcp.y + j(), z: 0 };
   return lm;
 }
 
 /** A face at a real position, with a real IPD. */
-function eyesAt(xMm: number, yMm: number, zMm: number) {
+function eyesAt(xMm: number, yMm: number, zMm: number, noise = 0) {
   const half = DEFAULT_ANTHRO.ipdMm / 2;
+  const j = () => (Math.random() - 0.5) * noise;
+  const l = project(xMm - half, yMm, zMm);
+  const r = project(xMm + half, yMm, zMm);
   return {
-    leftEye: project(xMm - half, yMm, zMm),
-    rightEye: project(xMm + half, yMm, zMm),
+    leftEye: { x: l.x + j(), y: l.y + j() },
+    rightEye: { x: r.x + j(), y: r.y + j() },
   };
 }
 
@@ -131,15 +137,16 @@ describe("parallax", () => {
   const EYE_Z = 600;
   const HAND_Z = 350;
 
-  it("recovers the depths it was given", () => {
-    const r = pointingPoint({ ...eyesAt(0, 0, EYE_Z), hand: handAt(0, -80, HAND_Z) })!;
-    expect(r.eyeMm).toBeCloseTo(EYE_Z, 0);
-    expect(r.fingerMm).toBeCloseTo(HAND_Z, 0);
-    expect(r.fingerMm).toBeLessThan(r.eyeMm);
-  });
+  // This test used to say "recovers the depths it was given" and passed by
+  // coincidence: the fixture distances were 600 and 350, which are exactly
+  // the rough constants now returned. A test that passes for the wrong
+  // reason is worse than no test, so it asserts the real contract.
 
-  // The whole point of the exercise. Lean left and the same fingertip points
-  // further right, because your eye moved and your finger did not.
+  // THE PROPERTY THE WHOLE FILE EXISTS FOR. Lean left and the same
+  // fingertip points further right, because your eye moved and your finger
+  // did not. A camera-relative mapping cannot do this, and these were
+  // briefly deleted by a bad edit, which is how a feature keeps its tests
+  // and loses its meaning.
   it("moving the eye LEFT moves the point RIGHT", () => {
     const h = handAt(0, -80, HAND_Z);
     const centred = pointingPoint({ ...eyesAt(0, 0, EYE_Z), hand: h })!;
@@ -154,8 +161,6 @@ describe("parallax", () => {
     expect(b.x).toBeGreaterThan(a.x);
   });
 
-  // A camera-relative mapping cannot do this: with the finger held still it
-  // returns the same point wherever the head goes. That is the bug.
   it("differs from the camera-relative answer once the head moves", () => {
     const h = handAt(0, -80, HAND_Z);
     const a = pointingPoint({ ...eyesAt(0, 0, EYE_Z), hand: h })!;
@@ -164,9 +169,63 @@ describe("parallax", () => {
   });
 
   it("points where the finger is when the eye is directly behind it", () => {
-    // Eye, finger and target on one vertical line through the camera axis.
     const r = pointingPoint({ ...eyesAt(0, 0, EYE_Z), hand: handAt(0, -80, HAND_Z) })!;
     expect(r.x).toBeCloseTo(MACBOOK_14.widthPx / 2, 0);
+  });
+
+  it("reports the STEADY depths, not the per-frame measurement", () => {
+    const far = pointingPoint({ ...eyesAt(0, 0, 900), hand: handAt(0, -80, 250) })!;
+    expect(far.eyeMm).toBeCloseTo(ROUGH_EYE_MM, 0);
+    expect(far.fingerMm).toBeCloseTo(ROUGH_HAND_MM, 0);
+    expect(far.fingerMm).toBeLessThan(far.eyeMm);
+  });
+
+  it("adapts slowly when given a tracker, and never in one frame", () => {
+    const d = new DepthTracker();
+    const before = d.eyeMm;
+    pointingPoint({ ...eyesAt(0, 0, 900), hand: handAt(0, -80, 250) },
+                  MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO, d);
+    expect(d.eyeMm).not.toBe(before);
+    // A single frame must move it by a sliver, not to the measurement.
+    expect(Math.abs(d.eyeMm - before)).toBeLessThan(40);
+    // Held there, it should arrive eventually.
+    for (let i = 0; i < 400; i++) {
+      pointingPoint({ ...eyesAt(0, 0, 900), hand: handAt(0, -80, 250) },
+                    MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO, d);
+    }
+    expect(d.eyeMm).toBeGreaterThan(before + 100);
+  });
+
+  it("clamps a nonsense measurement instead of following it", () => {
+    const d = new DepthTracker();
+    for (let i = 0; i < 2000; i++) d.update(50_000, 0.5);
+    expect(d.eyeMm).toBeLessThanOrEqual(EYE_RANGE_MM[1]);
+    expect(d.handMm).toBeGreaterThanOrEqual(HAND_RANGE_MM[0]);
+  });
+
+  // The measurement that settled the design. Caleb saw this as "it's still
+  // in such random places" twice before the cause was found.
+  it("is far steadier than measuring depth every frame", () => {
+    class FixedAdapt extends DepthTracker {
+      constructor(private readonly adapt: number) { super(); }
+      update(e: number, h: number) { return super.update(e, h, this.adapt); }
+    }
+    const spread = (adapt: number) => {
+      const d = new FixedAdapt(adapt);
+      const ys: number[] = [];
+      for (let i = 0; i < 400; i++) {
+        const r = pointingPoint(
+          { ...eyesAt(0, 0, 600, 0.004), hand: handAt(0, -80, 350, 0.004) },
+          MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO, d,
+        );
+        if (r) ys.push(r.y);
+      }
+      return Math.max(...ys) - Math.min(...ys);
+    };
+    const perFrame = spread(1);        // the old behaviour
+    const rough = spread(DEPTH_ADAPT); // what he asked for
+    expect(rough, `rough ${rough.toFixed(0)}px vs per-frame ${perFrame.toFixed(0)}px`)
+      .toBeLessThan(perFrame / 2);
   });
 });
 
@@ -180,6 +239,7 @@ describe("the ray must never fly off screen", () => {
   // and both are noisy, so the hand's estimate wanders into that zone by
   // itself. Guarding against zero was not enough: the numbers were finite
   // and absurd.
+
   const EYE_Z = 600;
 
   it("does not explode when the hand is near the face plane", () => {
