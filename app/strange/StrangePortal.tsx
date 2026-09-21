@@ -89,6 +89,7 @@ const IDLE_PROGRESS: CircleProgress = {
   direction: null,
   startAngle: null,
   endAngle: null,
+  roundness: 0,
 };
 
 export default function StrangePortal() {

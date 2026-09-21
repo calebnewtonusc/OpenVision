@@ -47,3 +47,49 @@ describe("real hand input", () => {
     expect(hits).toBeGreaterThan(17);
   });
 });
+
+describe("roundness separates an arc from a wander", () => {
+  function path(points: [number, number][]) {
+    const d = new CircleGestureDetector();
+    let last;
+    for (let i = 0; i < points.length; i++) {
+      last = d.push(points[i][0], points[i][1], 1000 + i * 33);
+    }
+    return last!;
+  }
+
+  // A real arc: every sample the same distance from a centre.
+  it("reports high roundness for an arc", () => {
+    const pts: [number, number][] = [];
+    for (let i = 0; i <= 40; i++) {
+      const a = (Math.PI * 1.2 * i) / 40;
+      pts.push([0.5 + Math.cos(a) * 0.15, 0.5 + Math.sin(a) * 0.15]);
+    }
+    const r = path(pts);
+    expect(r.roundness).toBeGreaterThan(0.6);
+  });
+
+  // THE FIRST VERSION OF THIS TEST WAS WRONG, and measuring said so. It
+  // used a single sine hump and expected low roundness. Measured, that path
+  // has a residual of 0.115 of its own spread: a 1.2 PI sine arc genuinely
+  // IS close to a circle, so 0.78 was the correct answer and the metric was
+  // being blamed for being right.
+  //
+  // A real non-circle is one whose distance from any centre keeps changing.
+  // A spiral turns as much as an arc and is never round.
+  it("reports low roundness for a spiral, which turns without being round", () => {
+    const pts: [number, number][] = [];
+    for (let i = 0; i <= 45; i++) {
+      const a = (Math.PI * 1.6 * i) / 45;
+      const r = 0.05 + (i / 45) * 0.22;
+      pts.push([0.5 + Math.cos(a) * r, 0.5 + Math.sin(a) * r]);
+    }
+    expect(path(pts).roundness).toBeLessThan(0.55);
+  });
+
+  it("a straight line is not round at all", () => {
+    const pts: [number, number][] = [];
+    for (let i = 0; i <= 30; i++) pts.push([0.2 + i * 0.02, 0.5]);
+    expect(path(pts).roundness).toBeLessThan(0.3);
+  });
+});
