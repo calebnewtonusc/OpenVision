@@ -286,6 +286,63 @@ describe("the ray must never fly off screen", () => {
   });
 });
 
+describe("parallax strength", () => {
+  // "Most of it is still barely on screen." The ray's gain is about 2.4 at a
+  // normal sitting distance, so every offset from the centre of the frame is
+  // multiplied and a fingertip a third of the way out lands near the edge.
+  const EYE = 600;
+  const HAND = 350;
+
+  it("strength 0 is the plain camera point", () => {
+    const hand = handAt(70, -80, HAND);
+    const off = pointingPoint({ ...eyesAt(-90, 0, EYE), hand },
+      MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO, undefined, { strength: 0 })!;
+    const alsoOff = pointingPoint({ ...eyesAt(90, 0, EYE), hand },
+      MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO, undefined, { strength: 0 })!;
+    // With no correction the head cannot matter at all.
+    expect(off.x).toBeCloseTo(alsoOff.x, 6);
+  });
+
+  it("strength 1 is the full ray", () => {
+    const hand = handAt(70, -80, HAND);
+    const a = pointingPoint({ ...eyesAt(-90, 0, EYE), hand },
+      MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO, undefined, { strength: 1 })!;
+    const b = pointingPoint({ ...eyesAt(-90, 0, EYE), hand },
+      MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO, undefined, { strength: 0 })!;
+    expect(Math.abs(a.x - b.x)).toBeGreaterThan(10);
+  });
+
+  it("is monotonic, so turning it up always corrects more", () => {
+    const hand = handAt(70, -80, HAND);
+    const at = (k: number) => pointingPoint({ ...eyesAt(-90, 0, EYE), hand },
+      MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO, undefined, { strength: k })!.x;
+    const base = at(0);
+    const xs = [0.25, 0.5, 0.75, 1].map((k) => Math.abs(at(k) - base));
+    for (let i = 1; i < xs.length; i++) {
+      expect(xs[i]).toBeGreaterThanOrEqual(xs[i - 1]);
+    }
+  });
+
+  it("keeps a fingertip well inside the frame on screen at the default", () => {
+    // A finger a third of the way to the edge must not land past it.
+    const hand = handAt(60, -80, HAND);
+    const r = pointingPoint({ ...eyesAt(0, 0, EYE), hand })!;
+    expect(r.x).toBeGreaterThan(0);
+    expect(r.x).toBeLessThan(MACBOOK_14.widthPx);
+    expect(r.y).toBeGreaterThan(-200);
+    expect(r.y).toBeLessThan(MACBOOK_14.heightPx + 200);
+  });
+
+  it("clamps a strength outside 0 to 1 rather than inverting", () => {
+    const hand = handAt(70, -80, HAND);
+    const lo = pointingPoint({ ...eyesAt(-90, 0, EYE), hand },
+      MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO, undefined, { strength: -5 })!;
+    const zero = pointingPoint({ ...eyesAt(-90, 0, EYE), hand },
+      MACBOOK_14, MAC_CAMERA, DEFAULT_ANTHRO, undefined, { strength: 0 })!;
+    expect(lo.x).toBeCloseTo(zero.x, 6);
+  });
+});
+
 describe("refusing to guess", () => {
   it("returns null for a short landmark array", () => {
     expect(pointingPoint({
