@@ -39,6 +39,10 @@ type Phase = "idle" | "drawing" | "igniting" | "open" | "closing";
 // the snap was the single worst thing about it.
 const IGNITE_MS = 520;
 const CLOSE_MS = 380;
+// A portal cannot be closed within this long of opening. Belt and braces
+// next to the armed flag: a single dropped or flickering pinch frame must
+// never be able to shut a portal the same gesture just opened.
+const MIN_OPEN_MS = 600;
 
 const ease = (t: number) => 1 - Math.pow(1 - t, 3);
 
@@ -254,6 +258,12 @@ export default function StrangePortal() {
       // ── Completion ────────────────────────────────────────────────────────
       if (p.completed && p.center) {
         phase.current = "igniting";
+        // THE PINCH THAT DREW THE CIRCLE IS STILL HELD. Without disarming
+        // here, the very next frame sees `igniting` plus a live pinch and
+        // closes the portal, so it opens for exactly one frame and vanishes.
+        // The close only re-arms once the pinch is released, on the `!pinch`
+        // line below.
+        armed.current = false;
         ring.current = {
           x: mx(p.center.x),
           y: my(p.center.y),
@@ -288,7 +298,8 @@ export default function StrangePortal() {
       if (
         (phase.current === "open" || phase.current === "igniting") &&
         pinch &&
-        armed.current
+        armed.current &&
+        now - ring.current.born > MIN_OPEN_MS
       ) {
         phase.current = "closing";
         ring.current.closeAt = now;
