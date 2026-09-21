@@ -166,7 +166,7 @@ export default function StrangePortal() {
           life: 1,
           decay: 0.009 + Math.random() * 0.024,
           heat: Math.random(),
-          width: 0.6 + Math.random() * 1.6,
+          width: 0.35 + Math.random() * 0.85,
           bind,
         });
       }
@@ -322,11 +322,12 @@ export default function StrangePortal() {
       // ── Fingertips, so the hand is visible before anything is drawn ───────
       if (lm && !portalUp) {
         ctx.globalCompositeOperation = "lighter";
+        // THE FINGERTIPS ARE NOT DOTS. Five filled circles tracking the hand
+        // read as a debug overlay, which is exactly what they were. A single
+        // dim pixel says "seen" without claiming to be part of the effect.
         for (const t of FINGER_TIPS) {
-          ctx.fillStyle = `rgba(${SPARK_MID}, ${pinch ? 0.55 : 0.2})`;
-          ctx.beginPath();
-          ctx.arc(mx(lm[t].x), my(lm[t].y), pinch ? 4 : 2.5, 0, Math.PI * 2);
-          ctx.fill();
+          ctx.fillStyle = `rgba(${SPARK_MID}, 0.1)`;
+          ctx.fillRect(mx(lm[t].x) - 0.5, my(lm[t].y) - 0.5, 1, 1);
         }
       }
 
@@ -616,13 +617,17 @@ export default function StrangePortal() {
 
         // Drawn as a LINE along velocity, length scaled by speed. Rule 1.
         const speed = Math.hypot(sp.vx, sp.vy) || 1;
-        const len = Math.min(44, 2 + speed * 3.6);
+        // A ROUND CAP ON A SHORT STROKE IS A DOT. lineCap "round" adds a
+        // half-disc at each end, so a 2px wide streak 2px long draws an
+        // exact circle, and every slow spark rendered as a blob. Butt caps,
+        // a floor on the length well above the width, and thinner strokes.
+        const len = Math.max(7, Math.min(48, speed * 4.2));
         const h = sp.heat * sp.life;
         const col = h > 0.62 ? CORE : h > 0.3 ? SPARK_HOT : h > 0.14 ? SPARK_MID : SPARK_COLD;
 
         ctx.strokeStyle = `rgba(${col}, ${Math.min(1, sp.life * 1.5)})`;
-        ctx.lineWidth = sp.width * (0.4 + sp.life);
-        ctx.lineCap = "round";
+        ctx.lineWidth = sp.width * (0.25 + sp.life * 0.6);
+        ctx.lineCap = "butt";
         ctx.beginPath();
         ctx.moveTo(sp.x, sp.y);
         ctx.lineTo(sp.x - (sp.vx / speed) * len, sp.y - (sp.vy / speed) * len);
