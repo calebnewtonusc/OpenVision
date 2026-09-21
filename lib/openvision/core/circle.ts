@@ -316,3 +316,20 @@ export class CircleGestureDetector {
     return { x: x / this.trail.length, y: y / this.trail.length };
   }
 }
+
+/**
+ * Convert an angle measured in NORMALIZED landmark space to the angle to use
+ * when drawing on a MIRRORED canvas, the selfie view every webcam UI uses.
+ *
+ * The mirror negates x, so a normalized point at theta lands at screen
+ * (cx - r*cos theta, cy + r*sin theta). Matching that against the canvas
+ * convention (cx + R*cos phi, cy + R*sin phi) gives cos phi = -cos theta and
+ * sin phi = sin theta, so phi = PI - theta.
+ *
+ * The consequence that actually bites: the map NEGATES the angle, so any
+ * sweep or direction measured in normalized space must also be negated, or
+ * arcs build away from the hand that is drawing them.
+ */
+export function mirrorAngle(theta: number): number {
+  return Math.PI - theta;
+}

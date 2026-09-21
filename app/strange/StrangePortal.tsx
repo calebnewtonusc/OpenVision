@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useHandTracking, type HandFrame } from "@/lib/openvision/react/useHandTracking";
-import { CircleGestureDetector, type CircleProgress } from "@/lib/openvision/core/circle";
+import {
+  CircleGestureDetector,
+  mirrorAngle,
+  type CircleProgress,
+} from "@/lib/openvision/core/circle";
 import { FINGER_TIPS } from "@/lib/openvision/core/skeleton";
 import {
   initialPortalState,
@@ -327,8 +331,15 @@ export default function StrangePortal() {
       if (S.phase === "drawing" && p.center && p.startAngle !== null && p.progress > 0.07) {
         const cn = p.center;
         const rn = p.radius;
-        const swept = Math.max(-Math.PI * 2, Math.min(Math.PI * 2, p.sweep));
-        const a0 = p.startAngle;
+        // NORMALIZED ANGLES DO NOT SURVIVE THE MIRROR. The detector measures
+        // angles in normalized space; the canvas draws in screen space, where
+        // mx flips x. A normalized point at theta lands at screen
+        // (cx - r*cos theta, cy + r*sin theta), so cos(phi) = -cos(theta) and
+        // sin(phi) = sin(theta), giving phi = PI - theta. Because the map
+        // negates the angle, the sweep direction inverts with it, which is
+        // why the ring built away from the hand instead of following it.
+        const swept = -Math.max(-Math.PI * 2, Math.min(Math.PI * 2, p.sweep));
+        const a0 = mirrorAngle(p.startAngle);
         const a1 = a0 + swept;
         const rpx = rn * RSCALE;
 
