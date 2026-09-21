@@ -27,6 +27,14 @@ import type { Landmark } from "./types";
  * reason: it answers "are these points on a circle", and a hand held still on
  * the rim of an imaginary circle fits perfectly while having drawn nothing.
  *
+ * THE NOISE TRAP. MediaPipe landmarks move a few pixels a frame even when
+ * the hand does not, which is about 0.003 to 0.006 normalized, and the turn
+ * between consecutive segments of a hand-drawn circle is only about 0.1
+ * radians. So noise of that size swamps the sign of the turn. Any rule that
+ * branches on `Math.sign(turn)` therefore fires at random on real input while
+ * passing every test written with a compass. Smooth first, and let noise
+ * cancel itself rather than trying to detect it.
+ *
  * THE JITTER TRAP. Segment direction is meaningless when the segment is a
  * pixel long, so short segments produce uniformly random turns. Summing those
  * is a random walk that eventually crosses any threshold. Segments below
@@ -59,6 +67,11 @@ export interface CircleGestureOptions {
   maxTurn?: number;
   /** Discard the trail after this many ms with no sample. Default 400. */
   staleMs?: number;
+  /**
+   * Exponential smoothing on the incoming point, 0 to 1. Default 0.45.
+   * Lower is smoother and laggier. See THE NOISE TRAP.
+   */
+  smoothing?: number;
 }
 
 export interface CircleProgress {
@@ -93,6 +106,7 @@ interface Sample {
 
 export class CircleGestureDetector {
   private trail: Sample[] = [];
+  private smooth: { x: number; y: number } | null = null;
   private sweep = 0;
   private lastT = 0;
   private readonly o: Required<CircleGestureOptions>;
@@ -104,6 +118,7 @@ export class CircleGestureDetector {
       minSegment: options.minSegment ?? 0.006,
       maxTurn: options.maxTurn ?? Math.PI / 3,
       staleMs: options.staleMs ?? 400,
+      smoothing: options.smoothing ?? 0.45,
     };
   }
 
@@ -123,6 +138,19 @@ export class CircleGestureDetector {
   push(x: number, y: number, now = Date.now()): CircleProgress {
     if (this.lastT && now - this.lastT > this.o.staleMs) this.reset();
     this.lastT = now;
+
+    // Smooth before measuring anything. See THE NOISE TRAP.
+    if (!this.smooth) {
+      this.smooth = { x, y };
+    } else {
+      const a = this.o.smoothing;
+      this.smooth = {
+        x: this.smooth.x + (x - this.smooth.x) * a,
+        y: this.smooth.y + (y - this.smooth.y) * a,
+      };
+    }
+    x = this.smooth.x;
+    y = this.smooth.y;
 
     const prev = this.trail[this.trail.length - 1];
     if (prev) {
@@ -152,15 +180,19 @@ export class CircleGestureDetector {
       const turn = Math.atan2(v1x * v2y - v1y * v2x, v1x * v2x + v1y * v2y);
 
       if (Math.abs(turn) > this.o.maxTurn) {
-        // A corner this sharp is a zigzag or a tracking glitch, not an arc.
+        // A corner this sharp is a zigzag, a wave turning around, or a
+        // tracking glitch. Not an arc. This one guard is what rejects a
+        // back-and-forth wave, because the turn at each end of a wave is
+        // close to PI and nothing else in a real circle comes near maxTurn.
         this.sweep = 0;
-      } else if (this.sweep !== 0 && Math.sign(turn) !== Math.sign(this.sweep)) {
-        // Reversing restarts rather than cancels. Cancelling lets a vigorous
-        // back-and-forth wave creep over the threshold given enough
-        // asymmetry, and that wave is the most common thing a person does at
-        // a camera.
-        this.sweep = turn;
       } else {
+        // Plain accumulation. An earlier version restarted the sweep whenever
+        // the turn changed sign, and that is what made the detector unusable
+        // with a real hand: turn per frame on a hand-drawn circle is about
+        // 0.1 radians, landmark jitter flips its sign constantly, and every
+        // flip threw the accumulation away. It passed every synthetic test
+        // and fired 0 times out of 20 on a circle with realistic jitter.
+        // Noise does not need rejecting here, it random walks about zero.
         this.sweep += turn;
       }
     }
@@ -196,6 +228,7 @@ export class CircleGestureDetector {
 
   reset() {
     this.trail = [];
+    this.smooth = null;
     this.sweep = 0;
     this.lastT = 0;
   }
