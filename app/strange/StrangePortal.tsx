@@ -343,36 +343,45 @@ export default function StrangePortal() {
         const a1 = a0 + swept;
         const rpx = rn * RSCALE;
 
+        // INTENSITY RAMPS WITH THE ARC. The first version opened at nearly
+        // full strength and added a little on top, so drawing felt the same
+        // at 10% as at 90% and the closing moment carried no payoff. Every
+        // term below is scaled by k, which is progress on a curve that
+        // starts slow: a faint ember when the hand sets off, a sheet of fire
+        // as it comes round. The exponent is what keeps the early part quiet;
+        // a linear ramp is already bright a third of the way in.
+        const k = Math.pow(p.progress, 1.6);
+
         ctx.globalCompositeOperation = "lighter";
         ctx.lineCap = "round";
 
         // Three passes, not one. A single clean stroke reads as geometry;
         // a wide dim pass under a narrow bright one under a white core reads
         // as something burning. Same trick as the finished rim.
-        ctx.shadowBlur = 34;
+        ctx.shadowBlur = 8 + 30 * k;
         ctx.shadowColor = `rgba(${SPARK_MID}, 1)`;
-        ctx.strokeStyle = `rgba(${SPARK_COLD}, ${0.22 + p.progress * 0.2})`;
-        ctx.lineWidth = Math.max(3, rpx * 0.075);
+        ctx.strokeStyle = `rgba(${SPARK_COLD}, ${0.04 + k * 0.34})`;
+        ctx.lineWidth = Math.max(1.5, rpx * (0.02 + k * 0.06));
         arcPath(cn, rpx, a0, a1, 96, 0.05);
         ctx.stroke();
 
-        ctx.strokeStyle = `rgba(${SPARK_MID}, ${0.4 + p.progress * 0.35})`;
-        ctx.lineWidth = Math.max(2, rpx * 0.034);
+        ctx.strokeStyle = `rgba(${SPARK_MID}, ${0.07 + k * 0.6})`;
+        ctx.lineWidth = Math.max(1.2, rpx * (0.01 + k * 0.03));
         arcPath(cn, rpx, a0, a1, 96, 0.02);
         ctx.stroke();
 
-        ctx.shadowBlur = 20;
-        ctx.strokeStyle = `rgba(${CORE}, ${0.35 + p.progress * 0.45})`;
-        ctx.lineWidth = Math.max(1.2, rpx * 0.013);
+        ctx.shadowBlur = 6 + 16 * k;
+        ctx.strokeStyle = `rgba(${CORE}, ${0.06 + k * 0.72})`;
+        ctx.lineWidth = Math.max(0.8, rpx * (0.004 + k * 0.011));
         arcPath(cn, rpx, a0, a1);
         ctx.stroke();
 
         // A hotter, shorter segment at the leading edge, so the eye follows
         // the head rather than the whole arc.
         const headSpan = Math.sign(swept) * Math.min(Math.abs(swept), 0.55);
-        ctx.shadowBlur = 60;
-        ctx.strokeStyle = `rgba(${CORE}, 0.95)`;
-        ctx.lineWidth = Math.max(2.6, rpx * 0.05);
+        ctx.shadowBlur = 14 + 50 * k;
+        ctx.strokeStyle = `rgba(${CORE}, ${0.35 + k * 0.6})`;
+        ctx.lineWidth = Math.max(1.4, rpx * (0.012 + k * 0.042));
         arcPath(cn, rpx, a1 - headSpan, a1, 24);
         ctx.stroke();
         ctx.shadowBlur = 0;
@@ -394,10 +403,13 @@ export default function StrangePortal() {
         const speedPx = headPrev ? Math.hypot(hx - headPrev.x, hy - headPrev.y) : 0;
         comet.current.push({ x: hx, y: hy });
         if (comet.current.length > 40) comet.current.shift();
-        spawnAt(hx, hy, tx, ty, Math.min(46, 16 + Math.floor(speedPx * 1.4)), 4.2, true);
+        // 2 sparks at the start, up to ~48 as it closes. Hand speed still
+        // adds on top, so a confident sweep reads as confident.
+        const n = Math.round((2 + k * 34) * (1 + Math.min(1.2, speedPx * 0.05)));
+        spawnAt(hx, hy, tx, ty, n, 2.2 + k * 3.0, true);
         // A few unbound ones that just fly off and die, so the rim is not the
         // only thing on screen.
-        spawnAt(hx, hy, tx, ty, 6, 5.5, false);
+        spawnAt(hx, hy, tx, ty, Math.round(k * 6), 3.0 + k * 2.8, false);
         attract.current = { cx: cn.x, cy: cn.y, r: rpx };
       }
       if (S.phase === "idle" || S.phase === "open" || S.phase === "closing") {
