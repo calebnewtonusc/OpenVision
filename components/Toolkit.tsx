@@ -226,7 +226,9 @@ function Pill({ color, label }: { color: string; label: string }) {
   );
 }
 
-export default function Toolkit() {
+export default function Toolkit({
+  stream: initialStream,
+}: { stream?: MediaStream } = {}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -330,12 +332,12 @@ export default function Toolkit() {
     };
   }, []);
 
-  const handleStart = useCallback(async () => {
+  const handleStart = useCallback(async (given?: MediaStream) => {
     if (starting || started) return;
     setStarting(true);
     setError(null);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const stream = given ?? await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "user",
           width: { ideal: 1280 },
@@ -371,6 +373,15 @@ export default function Toolkit() {
     }
   }, [handTracking, gazeTracking, started, starting]);
 
+  // The route's CameraGate already holds a granted stream: start straight
+  // away instead of asking the user to press Start a second time.
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (!initialStream || autoStartedRef.current) return;
+    autoStartedRef.current = true;
+    void handleStart(initialStream);
+  }, [initialStream, handleStart]);
+
   const spawnPanel = useCallback(() => {
     const id = `panel-${Date.now()}`;
     setPanels((p) => [
@@ -394,7 +405,7 @@ export default function Toolkit() {
         background:
           "radial-gradient(ellipse at top, rgba(99,102,241,0.18), transparent 55%), radial-gradient(ellipse at bottom right, rgba(168,85,247,0.08), transparent 50%), #050507",
         color: "white",
-        fontFamily: "Inter, sans-serif",
+        fontFamily: "var(--font-geist-sans), sans-serif",
       }}
     >
       <video
@@ -582,7 +593,7 @@ export default function Toolkit() {
           </p>
           {!started ? (
             <button
-              onClick={handleStart}
+              onClick={() => void handleStart()}
               disabled={starting}
               style={{
                 padding: "15px 36px",
@@ -685,11 +696,11 @@ export default function Toolkit() {
               >
                 <Pill
                   color="#a78bfa"
-                  label={`L · ${GESTURE_LABELS[readout.gestures.left] || "—"}`}
+                  label={`L · ${GESTURE_LABELS[readout.gestures.left] || "none"}`}
                 />
                 <Pill
                   color="#34d399"
-                  label={`R · ${GESTURE_LABELS[readout.gestures.right] || "—"}`}
+                  label={`R · ${GESTURE_LABELS[readout.gestures.right] || "none"}`}
                 />
               </div>
               {twoHand.state.active && (
@@ -815,7 +826,7 @@ useHandTracking({
             <Section
               eyebrow="react / usePointerEmulation"
               title="Make any button gaze + pinch aware"
-              description="Dispatches synthetic pointer + click events at the gaze position when you pinch. Existing UI code keeps working — no rewrite needed. Toggle below."
+              description="Dispatches synthetic pointer + click events at the gaze position when you pinch. Existing UI code keeps working with no rewrite. Toggle below."
               code={`const emul = usePointerEmulation({ enabled: true });
 
 useGazeTracking({ onSample: emul.setGaze });
@@ -879,7 +890,7 @@ useHandTracking({ videoRef, onFrame: (f) => emul.feedPinch(f.pinches) });
             <Section
               eyebrow="core / pinch.ts (tunable)"
               title="PinchDetector with live thresholds"
-              description="The state machine wired to live sliders. Move the enter/exit ratios while pinching — watch the state pill react. Hysteresis is what keeps the gesture from flickering."
+              description="The state machine wired to live sliders. Move the enter/exit ratios while pinching and watch the state pill react. Hysteresis is what keeps the gesture from flickering."
               code={`const det = new PinchDetector({ enterRatio, exitRatio, holdMs });
 const r = det.update(landmarks);
 // r.state ∈ idle | pinching | holding | dragging | released`}
@@ -974,7 +985,7 @@ useHandTracking({
             <Section
               eyebrow="react / useGazeTracking + GazeCursor + GazeCalibration"
               title="Eye tracking, calibration, and the floating cursor"
-              description="The cursor floating on this page is live. Click 'Calibrate gaze' in the header to run a 9-point training pass — accuracy jumps after."
+              description="The cursor floating on this page is live. Click 'Calibrate gaze' in the header to run a 9-point training pass. Accuracy jumps after."
               code={`const gaze = useGazeTracking({ onSample: dwell.feed });
 
 <GazeCursor x={gaze.gaze.x} y={gaze.gaze.y} dwellProgress={dwell.dwellProgress} />
@@ -1009,7 +1020,7 @@ useHandTracking({
                   }}
                 >
                   {gazeTracking.started
-                    ? "Gaze active. Look around — the cursor follows."
+                    ? "Gaze active. Look around and the cursor follows."
                     : "Gaze tracking did not start. Allow the second camera prompt or skip."}
                 </div>
               </div>

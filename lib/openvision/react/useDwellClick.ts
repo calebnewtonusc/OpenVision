@@ -35,7 +35,7 @@ export interface UseDwellClickResult {
  * Dwell-to-click: stare at a target for N ms to fire its click handler.
  *
  * Hook owns the focus engine state. Each instance tracks its own current
- * focus, candidate, and dwell timer — safe to mount multiple if needed.
+ * focus, candidate, and dwell timer, so it is safe to mount multiple if needed.
  */
 export function useDwellClick(
   opts: UseDwellClickOptions = {},

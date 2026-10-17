@@ -1,10 +1,12 @@
-import StrangePortal from "./StrangePortal";
+import type { Metadata } from "next";
+import StrangeLoader from "./Loader";
 
-export const metadata = {
-  title: "Portal",
-  description: "Draw a circle in the air and open a Doctor Strange portal.",
+export const metadata: Metadata = {
+  title: "Portal | OpenVision",
+  description:
+    "Pinch and draw a circle in the air to open a Doctor Strange portal. Hand tracking in the browser, from a webcam.",
 };
 
-export default function Page() {
-  return <StrangePortal />;
+export default function StrangePage() {
+  return <StrangeLoader />;
 }

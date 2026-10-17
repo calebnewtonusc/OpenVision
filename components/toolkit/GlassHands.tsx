@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import {
+  createScreenMap,
   drawGlassHand,
   rgba,
   type HandData,
@@ -24,7 +25,7 @@ interface Props {
 
 /**
  * Frosted-glass hand silhouettes on a dark background. For overlaying onto
- * a live video feed, render `<GlassOverlay>` (a sibling component) instead —
+ * a live video feed, render `<GlassOverlay>` (a sibling component) instead,
  * this one paints its own backdrop.
  */
 export function GlassHands({
@@ -91,15 +92,16 @@ export function GlassHands({
 
       if (showGrid) drawDotGrid(ctx, w, h);
 
-      const mx = (x: number) => (mirror ? 1 - x : x) * w;
-      const my = (y: number) => y * h;
+      const screen = createScreenMap({ width: w, height: h, mirror });
+      const mx = screen.x;
+      const my = screen.y;
 
       const liveHands = handsRef.current;
       const livePinches = pinchesRef.current;
 
       if (liveHands.length === 0) {
         ctx.fillStyle = "rgba(120,120,140,0.4)";
-        ctx.font = "500 13px Inter, sans-serif";
+        ctx.font = "500 13px Geist, sans-serif";
         ctx.textAlign = "center";
         ctx.fillText("Show your hand to the camera", w / 2, h / 2);
         return;
@@ -129,7 +131,7 @@ export function GlassHands({
           const wrist = hand.lm[0];
           const wx = mx(wrist.x);
           const wy = my(wrist.y) + 28;
-          ctx.font = "600 10px Inter, sans-serif";
+          ctx.font = "600 10px Geist, sans-serif";
           ctx.textAlign = "center";
           ctx.fillStyle = rgba(accent, 0.9);
           ctx.fillText(hand.side.toUpperCase(), wx, wy);

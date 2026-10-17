@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, type RefObject } from "react";
+import { useCallback, useEffect, useRef, type RefObject } from "react";
 import type { PinchResult } from "../core/pinch";
 
 export interface UsePinchScrollOptions {
@@ -33,7 +33,9 @@ export function usePinchScroll(
   opts: UsePinchScrollOptions,
 ): UsePinchScrollResult {
   const optsRef = useRef(opts);
-  optsRef.current = opts;
+  useEffect(() => {
+    optsRef.current = opts;
+  });
 
   const apply = useCallback((result: PinchResult | null) => {
     if (!result) return 0;
@@ -51,7 +53,7 @@ export function usePinchScroll(
 
     const el = o.target?.current;
     if (el) {
-      el.scrollTop += amt;
+      el.scrollBy({ top: amt, behavior: "instant" });
     } else {
       window.scrollBy({ top: amt, behavior: "instant" });
     }

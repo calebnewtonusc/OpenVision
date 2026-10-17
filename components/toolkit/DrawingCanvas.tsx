@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { HandData } from "@/lib/openvision";
-import { classifyGesture } from "@/lib/openvision";
+import { classifyGesture, createScreenMap } from "@/lib/openvision";
 
 interface Props {
   /** Latest hands from useHandTracking onFrame. */
@@ -51,8 +51,12 @@ export function DrawingCanvas({ hands }: Props) {
       raf = requestAnimationFrame(render);
       ctx.clearRect(0, 0, W, H);
 
-      const mx = (x: number) => (1 - x) * canvas.offsetWidth;
-      const my = (y: number) => y * canvas.offsetHeight;
+      const screen = createScreenMap({
+        width: canvas.offsetWidth,
+        height: canvas.offsetHeight,
+      });
+      const mx = screen.x;
+      const my = screen.y;
 
       for (const hand of handsRef.current) {
         const lm = hand.lm;

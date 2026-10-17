@@ -39,11 +39,17 @@ export function GazeCalibration({
 }: Props) {
   const [counts, setCounts] = useState<number[]>(Array(9).fill(0));
   const countsRef = useRef(counts);
-  countsRef.current = counts;
-
   useEffect(() => {
+    countsRef.current = counts;
+  }, [counts]);
+
+  // Reset when calibration re-opens. Adjusting state during render on a prop
+  // change is React's documented alternative to a reset effect.
+  const [prevActive, setPrevActive] = useState(active);
+  if (active !== prevActive) {
+    setPrevActive(active);
     if (active) setCounts(Array(9).fill(0));
-  }, [active]);
+  }
 
   const handleClick = useCallback(
     (idx: number, e: React.MouseEvent<HTMLButtonElement>) => {
@@ -93,7 +99,7 @@ export function GazeCalibration({
           gap: 14,
           color: "white",
           fontSize: 13,
-          fontFamily: "Inter, sans-serif",
+          fontFamily: "inherit",
         }}
       >
         <div
@@ -154,7 +160,7 @@ export function GazeCalibration({
           transform: "translate(-50%, -200px)",
           color: "#71717a",
           fontSize: 14,
-          fontFamily: "Inter, sans-serif",
+          fontFamily: "inherit",
           maxWidth: 320,
           textAlign: "center",
           lineHeight: 1.6,

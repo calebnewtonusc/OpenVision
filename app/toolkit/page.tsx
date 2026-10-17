@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import ToolkitLoader from "./Loader";
 
 export const metadata: Metadata = {
-  title: "OpenVision Toolkit: Live Examples of Every Primitive",
+  title: "Toolkit | OpenVision",
   description:
-    "One page, one camera, every tool in the OpenVision library running side by side: hand tracking, gaze tracking, pinch detection, dwell-to-click, pinch-to-scroll, spatial panels.",
+    "Every OpenVision primitive running live on one page: gaze plus pinch, two-hand zoom, dwell to click, an air keyboard and a tunable pinch.",
 };
 
 export default function ToolkitPage() {

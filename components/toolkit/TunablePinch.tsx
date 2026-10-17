@@ -41,14 +41,13 @@ export function TunablePinch({ hands }: Props) {
     detectorRef.current.holdMs = holdMs;
   }, [enterRatio, exitRatio, holdMs]);
 
+  // `hands` is a snapshot the parent publishes every 90ms, and the detector
+  // is stateful (hysteresis, hold timer), so it steps exactly once per
+  // snapshot.
   useEffect(() => {
     const right = hands.find((h) => h.side === "right") ?? hands[0];
-    if (!right) {
-      detectorRef.current.update(null);
-      setResult(null);
-      return;
-    }
-    setResult(detectorRef.current.update(right.lm));
+    const next = detectorRef.current.update(right ? right.lm : null);
+    setResult(right ? next : null);
   }, [hands]);
 
   const ratio = result?.ratio ?? 1;

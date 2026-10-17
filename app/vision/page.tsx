@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import VisionLoader from "./Loader";
 
 export const metadata: Metadata = {
-  title: "VisionWeb: Eye Tracking in Your Browser",
+  title: "Vision | OpenVision",
   description:
-    "WebGazer.js eye tracking calibrated to your gaze. Control spatial UI entirely with your eyes. No headset required.",
+    "Eye tracking in the browser with WebGazer: nine-point calibration, a gaze cursor and dwell to click.",
 };
 
 export default function VisionPage() {

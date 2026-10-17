@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import HandsLoader from "./Loader";
 
 export const metadata: Metadata = {
-  title: "HandsWeb: Hand Tracking in Your Browser",
+  title: "Hands | OpenVision",
   description:
-    "MediaPipe tracks 21 landmarks per hand. Pinch, point, grab, and gesture to interact with particles, fluid, and 3D objects.",
+    "MediaPipe tracks 21 landmarks per hand from a webcam. Glass hands, pinch to scroll, particles, finger painting, bubbles and a portal.",
 };
 
 export default function HandsPage() {

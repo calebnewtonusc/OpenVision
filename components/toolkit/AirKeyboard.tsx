@@ -130,7 +130,7 @@ function Key({
         fontFamily:
           label.length === 1
             ? "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
-            : "Inter, sans-serif",
+            : "var(--font-geist-sans), sans-serif",
         letterSpacing: label.length === 1 ? "0.04em" : "-0.01em",
         textTransform: label.length === 1 ? undefined : "uppercase",
         transition: "background 0.12s, border-color 0.12s",

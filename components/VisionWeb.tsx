@@ -14,16 +14,13 @@ import {
 } from "lucide-react";
 import {
   SpatialPanel,
+  createScreenMap,
   useHandTracking,
   useGazeTracking,
   useDwellClick,
 } from "@/lib/openvision";
 import { toast } from "sonner";
 
-interface GazePoint {
-  x: number;
-  y: number;
-}
 interface PanelDef {
   id: string;
   title: string;
@@ -170,7 +167,9 @@ const CALIB_POSITIONS = (() => {
 const CALIB_CLICKS_NEEDED = 5;
 
 // ── Main component ─────────────────────────────────────────────────────────
-export default function VisionWeb() {
+export default function VisionWeb({
+  stream: initialStream,
+}: { stream?: MediaStream } = {}) {
   const [started, setStarted] = useState(false);
   const [permState, setPermState] = useState<
     "unknown" | "prompt" | "granted" | "denied"
@@ -178,7 +177,15 @@ export default function VisionWeb() {
   const [ready, setReady] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [panels, setPanels] = useState<PanelDef[]>([]);
+  const [panels, setPanels] = useState<PanelDef[]>(() => [
+    {
+      id: "welcome",
+      title: "Welcome to VisionWeb",
+      x: 80,
+      y: 100,
+      content: "welcome",
+    },
+  ]);
   const [dwellMs, setDwellMs] = useState(1200);
   const [cameraError, setCameraError] = useState(false);
   const [cameraErrorDetail, setCameraErrorDetail] = useState("");
@@ -207,14 +214,18 @@ export default function VisionWeb() {
   const hands = useHandTracking({
     videoRef,
     onFrame: (f) => {
+      // Sensor to screen, once per frame, through the shared map.
+      const screen = createScreenMap({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      });
       // Smart pinch scroll: scroll whatever scrollable lives under the gaze
       // (or the pinch center if no gaze). VisionWeb is multi-panel so we don't
       // bind a single target like the toolkit demo does.
       const apply = (side: "left" | "right"): void => {
         const r = f.pinches[side];
         if (!r || r.state !== "dragging" || !r.center) return;
-        const sx = (1 - r.center.x) * window.innerWidth;
-        const sy = r.center.y * window.innerHeight;
+        const { x: sx, y: sy } = screen.point(r.center);
         const el = document.elementFromPoint(sx, sy);
         const raw = -r.delta.y * 700;
         const amt = Math.sign(raw) * Math.min(Math.abs(raw), 220);
@@ -232,8 +243,7 @@ export default function VisionWeb() {
       const click = (side: "left" | "right"): void => {
         const r = f.pinches[side];
         if (r?.changed && r.state === "released" && r.center) {
-          const sx = (1 - r.center.x) * window.innerWidth;
-          const sy = r.center.y * window.innerHeight;
+          const { x: sx, y: sy } = screen.point(r.center);
           const el = document.elementFromPoint(sx, sy);
           if (el) (el as HTMLElement).click();
         }
@@ -258,11 +268,10 @@ export default function VisionWeb() {
       };
     };
     const q = navWithPermissions.permissions?.query;
-    if (!q) {
-      setPermState("prompt");
-      return;
-    }
-    q({ name: "camera" })
+    // No Permissions API (older Safari): stay "unknown", which renders the
+    // same as "prompt".
+    if (!q) return;
+    q.call(navWithPermissions.permissions, { name: "camera" })
       .then((p) => {
         if (cancelled) return;
         setPermState(
@@ -291,7 +300,7 @@ export default function VisionWeb() {
   }, []);
 
   // ── Camera start ─────────────────────────────────────────────────────────
-  const handleStart = useCallback(async () => {
+  const handleStart = useCallback(async (given?: MediaStream) => {
     if (startingRef.current) return;
     startingRef.current = true;
     setStarted(true);
@@ -306,7 +315,7 @@ export default function VisionWeb() {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const stream = given ?? await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "user",
           width: { ideal: 640 },
@@ -332,6 +341,15 @@ export default function VisionWeb() {
       }
     }
   }, []);
+
+  // The route's CameraGate already holds a granted stream: start straight
+  // away instead of asking the user to press Start a second time.
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (!initialStream || autoStartedRef.current) return;
+    autoStartedRef.current = true;
+    void handleStart(initialStream);
+  }, [initialStream, handleStart]);
 
   // ── Hand tracking + gaze: start after camera is ready ─────────────────────
   useEffect(() => {
@@ -376,17 +394,6 @@ export default function VisionWeb() {
   );
 
   // ── Panels ────────────────────────────────────────────────────────────────
-  useEffect(() => {
-    setPanels([
-      {
-        id: "welcome",
-        title: "Welcome to VisionWeb",
-        x: 80,
-        y: 100,
-        content: "welcome",
-      },
-    ]);
-  }, []);
 
   const closePanel = useCallback((id: string) => {
     setPanels((p) => p.filter((panel) => panel.id !== id));
@@ -533,7 +540,7 @@ export default function VisionWeb() {
                 right: 0,
                 textAlign: "center",
                 fontSize: 9,
-                fontFamily: "Inter, sans-serif",
+                fontFamily: "var(--font-geist-sans), sans-serif",
                 fontWeight: 600,
                 color: "rgba(255,255,255,0.7)",
                 letterSpacing: "0.04em",
@@ -557,7 +564,7 @@ export default function VisionWeb() {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontFamily: "Inter, sans-serif",
+            fontFamily: "var(--font-geist-sans), sans-serif",
           }}
         >
           <div
@@ -660,7 +667,7 @@ export default function VisionWeb() {
             ) : (
               <>
                 <button
-                  onClick={handleStart}
+                  onClick={() => void handleStart()}
                   style={{
                     width: "100%",
                     padding: "14px 24px",
@@ -747,7 +754,7 @@ export default function VisionWeb() {
                 inset: 0,
                 zIndex: 9000,
                 background: "#09090b",
-                fontFamily: "Inter, sans-serif",
+                fontFamily: "var(--font-geist-sans), sans-serif",
               }}
             >
               <div
@@ -921,7 +928,7 @@ export default function VisionWeb() {
                           textAnchor="middle"
                           fill="rgba(255,255,255,0.6)"
                           fontSize={9}
-                          fontFamily="Inter, sans-serif"
+                          fontFamily="Geist, sans-serif"
                           fontWeight={600}
                         >
                           {clicks}/{CALIB_CLICKS_NEEDED}

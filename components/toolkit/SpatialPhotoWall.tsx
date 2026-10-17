@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { PinchResult } from "@/lib/openvision";
+import { NORMALIZED_MIRROR, type PinchResult } from "@/lib/openvision";
 
 interface Photo {
   id: string;
@@ -46,7 +46,12 @@ export function SpatialPhotoWall({ pinches, twoHand }: Props) {
     SEED_PHOTOS.map((p, i) => ({ ...p, id: `p${i}`, z: i })),
   );
   const photosRef = useRef(photos);
-  photosRef.current = photos;
+  useEffect(() => {
+    photosRef.current = photos;
+  }, [photos]);
+  // Mirrors grabbedRef.current.photoId for rendering; the ref stays the
+  // source of truth inside the per-frame pinch handler.
+  const [grabbedId, setGrabbedId] = useState<string | null>(null);
   const grabbedRef = useRef<{
     photoId: string | null;
     side: "left" | "right" | null;
@@ -85,11 +90,11 @@ export function SpatialPhotoWall({ pinches, twoHand }: Props) {
             photoX: 0,
             photoY: 0,
           };
+          setGrabbedId(null);
         }
         return;
       }
-      const nx = 1 - result.center.x;
-      const ny = result.center.y;
+      const { x: nx, y: ny } = NORMALIZED_MIRROR.point(result.center);
       const pinched = ["pinching", "holding", "dragging"].includes(
         result.state,
       );
@@ -107,6 +112,7 @@ export function SpatialPhotoWall({ pinches, twoHand }: Props) {
             photoX: hit.x,
             photoY: hit.y,
           };
+          setGrabbedId(hit.id);
           setPhotos((prev) =>
             prev.map((p) => (p.id === hit.id ? { ...p, z: newZ } : p)),
           );
@@ -142,6 +148,7 @@ export function SpatialPhotoWall({ pinches, twoHand }: Props) {
           photoX: 0,
           photoY: 0,
         };
+        setGrabbedId(null);
       }
     };
     handleSide("left", pinches.left);
@@ -150,8 +157,7 @@ export function SpatialPhotoWall({ pinches, twoHand }: Props) {
 
   useEffect(() => {
     if (!twoHand.active) return;
-    const cx = 1 - twoHand.center.x;
-    const cy = twoHand.center.y;
+    const { x: cx, y: cy } = NORMALIZED_MIRROR.point(twoHand.center);
     const topByZ = [...photosRef.current].sort((a, b) => b.z - a.z);
     const target = findPhotoAt(cx, cy) ?? topByZ[0];
     if (!target) return;
@@ -198,7 +204,7 @@ export function SpatialPhotoWall({ pinches, twoHand }: Props) {
         }}
       />
       {photos.map((p) => {
-        const isGrabbed = grabbedRef.current.photoId === p.id;
+        const isGrabbed = grabbedId === p.id;
         return (
           <div
             key={p.id}

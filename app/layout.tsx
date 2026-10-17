@@ -1,14 +1,19 @@
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "sonner";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
+const sans = Geist({ subsets: ["latin"], variable: "--font-geist-sans" });
+const mono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono" });
 
 export const metadata: Metadata = {
-  title: "OpenVision: Spatial Computing in Your Browser",
+  title: "OpenVision: hand and eye tracking from a webcam",
   description:
-    "Apple Vision Pro-style spatial computing. Eye tracking, hand tracking, and spatial UI running entirely in your browser. No headset required.",
+    "Hand tracking, pinch, gaze and dwell to click, running in a browser tab from a webcam. A demo site and a reusable TypeScript toolkit.",
+};
+
+export const viewport: Viewport = {
+  themeColor: "#09090b",
 };
 
 export default function RootLayout({
@@ -17,8 +22,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={inter.variable}>
-      <body className="antialiased bg-zinc-950 text-white">
+    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
+      <body className="bg-zinc-950 font-sans text-zinc-50 antialiased">
         {children}
         <Toaster theme="dark" position="bottom-right" />
       </body>

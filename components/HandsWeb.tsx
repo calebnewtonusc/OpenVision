@@ -9,6 +9,7 @@ import {
   useTwoHandGesture,
   usePinchScroll,
   classifyGesture,
+  createScreenMap,
   drawGlassHand,
   GazeCursor,
   GazeCalibration,
@@ -38,7 +39,7 @@ type Mode = (typeof MODES)[number];
 const SCROLL_FEED: { title: string; body: string; tag: string }[] = [
   {
     title: "On-device gaze tracking",
-    body: "WebGazer fits a ridge regression model to your face landmarks during calibration. Nine dots, five clicks each, 45 samples — everything runs in your tab.",
+    body: "WebGazer fits a ridge regression model to your face landmarks during calibration. Nine dots, five clicks each, 45 samples, and everything runs in your tab.",
     tag: "Eye tracking",
   },
   {
@@ -99,12 +100,6 @@ const SCROLL_FEED: { title: string; body: string; tag: string }[] = [
 ];
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-interface LM {
-  x: number;
-  y: number;
-  z: number;
-}
-
 interface Particle {
   x: number;
   y: number;
@@ -144,8 +139,35 @@ interface Gesture {
   right: GestureName;
 }
 
+/**
+ * Advance one bubble a frame. Kept outside the component: the pool is a
+ * mutable per-frame buffer in a ref, never rendered by React.
+ */
+function stepBubble(
+  b: Bubble,
+  tips: { x: number; y: number }[],
+): "gone" | "popping" | "popped" | "alive" {
+  if (b.popped) {
+    b.popAge += 0.05;
+    return b.popAge >= 1 ? "gone" : "popping";
+  }
+  b.x += b.vx;
+  b.y += b.vy;
+  b.vx += (Math.random() - 0.5) * 0.1;
+  if (b.y + b.r < 0) return "gone";
+  for (const t of tips) {
+    if (Math.hypot(t.x - b.x, t.y - b.y) < b.r + 12) {
+      b.popped = true;
+      return "popped";
+    }
+  }
+  return "alive";
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
-export default function HandsWeb() {
+export default function HandsWeb({
+  stream: initialStream,
+}: { stream?: MediaStream } = {}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawRafRef = useRef(0);
@@ -252,9 +274,10 @@ export default function HandsWeb() {
     const currentMode = modeRef.current;
     const hands = handsData.current;
 
-    // Mirror helper
-    const mx = (x: number) => (1 - x) * W;
-    const my = (y: number) => y * H;
+    // Sensor to screen, once, through the shared map.
+    const screen = createScreenMap({ width: W, height: H });
+    const mx = screen.x;
+    const my = screen.y;
 
     // ── Background ──────────────────────────────────────────────────────────
     if (currentMode === "glass") {
@@ -422,11 +445,11 @@ export default function HandsWeb() {
       // Hint
       if (hands.length === 0 || strokes.current.length === 0) {
         ctx.fillStyle = "rgba(255,255,255,0.12)";
-        ctx.font = "bold 18px Inter, sans-serif";
+        ctx.font = "bold 18px Geist, sans-serif";
         ctx.textAlign = "center";
         ctx.fillText("Point with index finger to draw", W / 2, H / 2);
         ctx.fillStyle = "rgba(255,255,255,0.05)";
-        ctx.font = "13px Inter, sans-serif";
+        ctx.font = "13px Geist, sans-serif";
         ctx.fillText("Open palm to clear", W / 2, H / 2 + 30);
       }
     }
@@ -447,9 +470,9 @@ export default function HandsWeb() {
       // Update + draw bubbles
       const alive: Bubble[] = [];
       for (const b of bubbles.current) {
-        if (b.popped) {
-          b.popAge += 0.05;
-          if (b.popAge >= 1) continue;
+        const fate = stepBubble(b, tips);
+        if (fate === "gone") continue;
+        if (fate === "popping") {
           // Pop ring
           ctx.save();
           ctx.globalAlpha = 1 - b.popAge;
@@ -465,26 +488,8 @@ export default function HandsWeb() {
           continue;
         }
 
-        // Physics
-        b.x += b.vx;
-        b.y += b.vy;
-        b.vx += (Math.random() - 0.5) * 0.1;
-        if (b.y + b.r < 0) continue; // off screen top
-
-        // Collision with fingertips
-        let popped = false;
-        for (const t of tips) {
-          if (Math.hypot(t.x - b.x, t.y - b.y) < b.r + 12) {
-            b.popped = true;
-            popped = true;
-            break;
-          }
-        }
-        if (!popped) alive.push(b);
-        else {
-          alive.push(b);
-          continue;
-        }
+        alive.push(b);
+        if (fate === "popped") continue;
 
         // Draw bubble
         ctx.save();
@@ -519,7 +524,7 @@ export default function HandsWeb() {
 
       if (hands.length === 0) {
         ctx.fillStyle = "rgba(255,255,255,0.12)";
-        ctx.font = "bold 18px Inter, sans-serif";
+        ctx.font = "bold 18px Geist, sans-serif";
         ctx.textAlign = "center";
         ctx.fillText("Pop the bubbles with your fingertips", W / 2, H / 2);
       }
@@ -622,7 +627,7 @@ export default function HandsWeb() {
 
       if (hands.length === 0) {
         ctx.fillStyle = "rgba(255,255,255,0.1)";
-        ctx.font = "bold 18px Inter, sans-serif";
+        ctx.font = "bold 18px Geist, sans-serif";
         ctx.textAlign = "center";
         ctx.fillText("Move your hands through the portal", W / 2, H / 2);
       }
@@ -673,18 +678,18 @@ export default function HandsWeb() {
       const wx = mx(wrist.x);
       const wy = my(wrist.y) + 32;
       ctx.fillStyle = hand.side === "left" ? "#a78bfa" : "#34d399";
-      ctx.font = "bold 12px Inter, sans-serif";
+      ctx.font = "bold 12px Geist, sans-serif";
       ctx.textAlign = "center";
       ctx.fillText(g, wx, wy);
     }
   }, [spawnBubble]);
 
   // ── Camera + tracking init via useHandTracking ─────────────────────────────
-  const start = useCallback(async () => {
+  const start = useCallback(async (given?: MediaStream) => {
     setLoading(true);
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
+      stream = given ?? await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "user",
           width: { ideal: 1280 },
@@ -727,6 +732,15 @@ export default function HandsWeb() {
     toast.success("Hand tracking active");
   }, [drawFrame, spawnBubble, handTracking]);
 
+  // The route's CameraGate already holds a granted stream: start straight
+  // away instead of asking the user to press Start a second time.
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (!initialStream || autoStartedRef.current) return;
+    autoStartedRef.current = true;
+    void start(initialStream);
+  }, [initialStream, start]);
+
   useEffect(() => {
     return () => {
       cancelAnimationFrame(drawRafRef.current);
@@ -741,7 +755,7 @@ export default function HandsWeb() {
         position: "fixed",
         inset: 0,
         background: "#09090b",
-        fontFamily: "Inter, sans-serif",
+        fontFamily: "var(--font-geist-sans), sans-serif",
         display: "flex",
         flexDirection: "column",
       }}
@@ -1211,7 +1225,7 @@ export default function HandsWeb() {
                 across any mode.
               </p>
               <button
-                onClick={start}
+                onClick={() => void start()}
                 disabled={loading}
                 style={{
                   padding: "14px 40px",
@@ -1371,7 +1385,6 @@ export default function HandsWeb() {
         )}
       </div>
 
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');`}</style>
     </div>
   );
 }

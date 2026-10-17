@@ -8,6 +8,7 @@ import {
   type CircleProgress,
 } from "@/lib/openvision/core/circle";
 import { FINGER_TIPS } from "@/lib/openvision/core/skeleton";
+import { createScreenMap } from "@/lib/openvision/core/screen";
 import {
   initialPortalState,
   stepPortal,
@@ -92,7 +93,9 @@ const IDLE_PROGRESS: CircleProgress = {
   roundness: 0,
 };
 
-export default function StrangePortal() {
+export default function StrangePortal({
+  stream: initialStream,
+}: { stream?: MediaStream } = {}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -186,8 +189,9 @@ export default function StrangePortal() {
 
       const f = frame.current;
       const lm = f?.hands?.[0]?.lm ?? null;
-      const mx = (nx: number) => (1 - nx) * W;
-      const my = (ny: number) => ny * H;
+      const screen = createScreenMap({ width: W, height: H });
+      const mx = screen.x;
+      const my = screen.y;
 
       // Trace an arc of a circle defined in NORMALIZED space, mapping every
       // point through mx/my. Drawn as a polyline rather than ctx.arc because
@@ -448,7 +452,6 @@ export default function StrangePortal() {
         const shut = collapseAmount(S, now, CLOSE_MS);
         const e = ease(ignite);
         const g = geom.current;
-        const rn = g.r * (1 - ease(shut));
         const cn = { x: g.cx, y: g.cy };
         const rpx = clampR(g.r * RSCALE) * (1 - ease(shut));
         const vis = e * (1 - shut);
@@ -650,16 +653,39 @@ export default function StrangePortal() {
     };
   }, []);
 
-  const begin = async () => {
-    const v = videoRef.current;
-    if (!v) return;
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 1280, height: 720, facingMode: "user" },
-    });
-    v.srcObject = stream;
-    await v.play();
-    await start();
-  };
+  const streamRef = useRef<MediaStream | null>(null);
+  const begin = useCallback(
+    async (given?: MediaStream) => {
+      const v = videoRef.current;
+      if (!v) return;
+      const stream =
+        given ??
+        (await navigator.mediaDevices.getUserMedia({
+          video: { width: 1280, height: 720, facingMode: "user" },
+        }));
+      streamRef.current = stream;
+      v.srcObject = stream;
+      await v.play();
+      await start();
+    },
+    [start],
+  );
+
+  useEffect(() => {
+    return () => {
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
+
+  // The route's CameraGate already holds a granted stream: start straight
+  // away instead of asking the user to press Start a second time.
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (!initialStream || autoStartedRef.current) return;
+    autoStartedRef.current = true;
+    void begin(initialStream);
+  }, [initialStream, begin]);
+
 
   const portalUp = hud.phase === "open" || hud.phase === "igniting";
 
@@ -680,7 +706,7 @@ export default function StrangePortal() {
               in this tab.
             </p>
             <button
-              onClick={begin}
+              onClick={() => void begin()}
               disabled={loading}
               className="rounded-full border border-amber-500/40 bg-amber-500/10 px-8 py-3 text-amber-100 transition hover:bg-amber-500/20 disabled:opacity-40"
             >
